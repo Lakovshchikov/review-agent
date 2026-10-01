@@ -22,12 +22,14 @@ METHODOLOGY_MARKERS = [
 
 def test_runtime_config_contains_only_safety_content():
     safety = SafetyConfig(output_language="ru", forbidden_commands=["npm", "yarn"])
-    rendered = render_harness_runtime_config(
-        Path("/scratch/run-1/worktree"), Path("/scratch/run-1"), safety
-    )
+    worktree_path = Path("/scratch/run-1/worktree")
+    scratch_path = Path("/scratch/run-1")
+    rendered = render_harness_runtime_config(worktree_path, scratch_path, safety)
 
-    assert "/scratch/run-1/worktree" in rendered
-    assert "/scratch/run-1" in rendered
+    # Paths render platform-native (backslashes on Windows) - compare
+    # against str(Path(...)), not a hardcoded POSIX literal.
+    assert str(worktree_path) in rendered
+    assert str(scratch_path) in rendered
     assert "npm" in rendered
     assert "yarn" in rendered
     assert "ru" in rendered

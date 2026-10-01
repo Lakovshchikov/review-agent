@@ -29,29 +29,35 @@ def test_invoke_harness_builds_correct_argv_and_returns_output():
     provider = ProviderConfig(name="anthropic", model="claude-sonnet-4-5", reasoning_effort="medium")
     stub = _StubRunner(stdout="# Review\nfound 3 issues")
 
+    prompt_file = Path("/scratch/run-1/prompt.md")
+    agents_file = Path("/scratch/run-1/harness-agents.md")
+    worktree_path = Path("/scratch/run-1/worktree")
+
     result = invoke_harness(
         harness,
         provider,
-        prompt_file=Path("/scratch/run-1/prompt.md"),
-        agents_file=Path("/scratch/run-1/harness-agents.md"),
-        worktree_path=Path("/scratch/run-1/worktree"),
+        prompt_file=prompt_file,
+        agents_file=agents_file,
+        worktree_path=worktree_path,
         runner=stub,
     )
 
     assert result.stdout == "# Review\nfound 3 issues"
     assert len(stub.calls) == 1
     argv = stub.calls[0]["argv"]
+    # Paths render platform-native (backslashes on Windows, forward slashes
+    # elsewhere) - compare against str(Path(...)), not a hardcoded literal.
     assert argv == [
         "opencode",
         "run",
         "--model",
         "anthropic/claude-sonnet-4-5",
         "--agents-file",
-        "/scratch/run-1/harness-agents.md",
+        str(agents_file),
         "--prompt-file",
-        "/scratch/run-1/prompt.md",
+        str(prompt_file),
     ]
-    assert stub.calls[0]["kwargs"]["cwd"] == "/scratch/run-1/worktree"
+    assert stub.calls[0]["kwargs"]["cwd"] == str(worktree_path)
     assert stub.calls[0]["kwargs"]["env"]["REVIEW_AGENT_REASONING_EFFORT"] == "medium"
 
 
