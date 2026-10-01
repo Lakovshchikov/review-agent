@@ -1,0 +1,50 @@
+# Пример конфигурации review-agent. Скопируйте в config.yaml и отредактируйте.
+# Полный контекст решений — см. /AGENTS.md.
+
+provider:
+  # Имя провайдера — чисто информационное, харнесс сам резолвит его в
+  # своей системе провайдеров (см. harness.command ниже).
+  name: anthropic
+  model: claude-sonnet-4-5
+  # Reasoning effort задаётся явно — не оставляем харнессу default.
+  reasoning_effort: medium
+  # Имя переменной окружения, где лежит ключ провайдера (сам ключ в
+  # конфиг не кладём).
+  api_key_env: ANTHROPIC_API_KEY
+
+harness:
+  # Шаблон команды харнесса. Плейсхолдеры подставляются адаптером:
+  #   {model}        -> "<provider.name>/<provider.model>"
+  #   {prompt_file}  -> путь к отрендеренному review-промпту
+  #   {agents_file}  -> путь к сгенерированному safety/runtime-конфигу
+  command:
+    - opencode
+    - run
+    - --model
+    - "{model}"
+    - --agents-file
+    - "{agents_file}"
+    - --prompt-file
+    - "{prompt_file}"
+
+report:
+  # {run_id} подставляется автоматически (уникален на каждый прогон).
+  output_path: "./reports/review-{run_id}.md"
+
+# Опциональные knowledge-skill файлы — подсказки по паттернам ошибок,
+# не ограничение. По умолчанию пусто (без skill'ов).
+skills: []
+
+safety:
+  output_language: ru
+  forbidden_commands:
+    - yarn
+    - npm
+    - pnpm
+    - npx
+    - test
+    - lint
+    - stylelint
+    - build
+    - typecheck
+    - tsc
