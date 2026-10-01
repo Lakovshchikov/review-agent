@@ -75,5 +75,13 @@ def run_review(
             runner=harness_runner,
         )
 
+        # Harnesses like OpenCode print their tool-call trace (what it read,
+        # what it ran, permission denials) to stderr, not stdout. Persisting
+        # it is the only way to diagnose a run that completes successfully
+        # but produces a suspiciously thin report (e.g. the model stopped
+        # after one line without exploring).
+        stderr_log_path = run_scratch_path / "harness-stderr.log"
+        stderr_log_path.write_text(result.stderr, encoding="utf-8")
+
         output_path = Path(config.report.output_path.format(run_id=handle.run_id))
         return write_report(result.stdout, output_path)

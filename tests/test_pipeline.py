@@ -43,7 +43,10 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
             Path(kwargs["cwd"]) / "opencode.json"
         ).exists()
         return subprocess.CompletedProcess(
-            args=argv, returncode=0, stdout="# Review\n\nNo issues found.", stderr=""
+            args=argv,
+            returncode=0,
+            stdout="# Review\n\nNo issues found.",
+            stderr="tool trace line",
         )
 
     report_path = run_review(
@@ -74,6 +77,11 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
     assert run_id_match is not None
     run_id = run_id_match.group(1)
     assert not (scratch_dir / run_id / "worktree").exists()
+
+    # The harness's stderr (tool-call trace, permission denials) is
+    # persisted for debugging - it is not visible in the report itself.
+    stderr_log = scratch_dir / run_id / "harness-stderr.log"
+    assert stderr_log.read_text(encoding="utf-8") == "tool trace line"
 
     # The primary repo was never touched.
     assert (fixture["repo"] / "file.txt").read_text(encoding="utf-8") == "v2\n"

@@ -115,7 +115,12 @@ def invoke_harness(
         argv[0] = resolved
 
     env = os.environ.copy()
-    result = runner(argv, capture_output=True, text=True, cwd=str(worktree_path), env=env)
+    # Explicit encoding="utf-8": without it, `text=True` decodes using
+    # locale.getpreferredencoding() (cp1252 on Windows), garbling OpenCode's
+    # UTF-8 output (em-dashes, curly quotes) into mojibake - verified live.
+    result = runner(
+        argv, capture_output=True, text=True, encoding="utf-8", cwd=str(worktree_path), env=env
+    )
     if result.returncode != 0:
         raise HarnessError(
             f"Harness exited with code {result.returncode}: {result.stderr.strip()}"
