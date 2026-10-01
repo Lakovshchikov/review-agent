@@ -26,7 +26,7 @@ METHODOLOGY_MARKERS = [
 
 
 def test_safety_note_contains_only_safety_content():
-    safety = SafetyConfig(output_language="ru", allowed_bash_patterns=["git diff*", "rg *"])
+    safety = SafetyConfig(output_language="ru", denied_bash_patterns=["npm *", "rm *"])
     worktree_path = Path("/scratch/run-1/worktree")
     scratch_path = Path("/scratch/run-1")
 
@@ -34,8 +34,8 @@ def test_safety_note_contains_only_safety_content():
 
     assert str(worktree_path) in rendered
     assert str(scratch_path) in rendered
-    assert "git diff*" in rendered
-    assert "rg *" in rendered
+    assert "npm *" in rendered
+    assert "rm *" in rendered
     assert "ru" in rendered
 
     for marker in METHODOLOGY_MARKERS:
@@ -52,15 +52,18 @@ def test_write_safety_note_creates_file(tmp_path):
     assert note_path.parent == scratch
 
 
-def test_opencode_agent_config_denies_everything_not_explicitly_allowed():
-    safety = SafetyConfig(allowed_bash_patterns=["git diff*", "git log*"])
+def test_opencode_agent_config_denies_listed_patterns_only():
+    """No catch-all "*" entry: verified live that adding one makes bash
+    entirely unavailable in real OpenCode, even for explicitly allowed
+    patterns - see harness_config.py module docstring."""
+    safety = SafetyConfig(denied_bash_patterns=["npm *", "rm *"])
 
     config = build_opencode_agent_config(safety, agent_name="reviewer")
 
     agent = config["agent"]["reviewer"]
-    assert agent["permission"]["bash"]["git diff*"] == "allow"
-    assert agent["permission"]["bash"]["git log*"] == "allow"
-    assert agent["permission"]["bash"]["*"] == "deny"
+    assert agent["permission"]["bash"]["npm *"] == "deny"
+    assert agent["permission"]["bash"]["rm *"] == "deny"
+    assert "*" not in agent["permission"]["bash"]
     assert agent["permission"]["edit"] == "deny"
     assert agent["permission"]["webfetch"] == "deny"
     assert agent["permission"]["websearch"] == "deny"

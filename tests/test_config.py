@@ -15,7 +15,7 @@ def test_example_config_loads_without_error():
     assert config.harness.agent_name == "reviewer"
     assert "{run_id}" in config.report.output_path
     assert config.skills == []
-    assert "git diff*" in config.safety.allowed_bash_patterns
+    assert "npm *" in config.safety.denied_bash_patterns
     assert config.safety.output_language == "ru"
 
 

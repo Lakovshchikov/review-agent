@@ -1,13 +1,16 @@
 # Пример конфигурации review-agent. Скопируйте в config.yaml и отредактируйте.
 # Полный контекст решений — см. /AGENTS.md.
 #
-# Синтаксис ниже сверен с реальным OpenCode CLI v2.0.21 (opencode --help,
-# opencode run --help, opencode debug agents, схема opencode.ai/config.json) —
-# не предположение, а проверенные факты.
+# Синтаксис ниже сверен ВЖИВУЮ с реальным OpenCode CLI v2.0.21 (opencode
+# --help, opencode run --help, opencode debug agents, и прямыми прогонами
+# с реальным облачным провайдером) — не предположение, а проверенные факты,
+# включая несколько, которые изначально предполагались иначе и были
+# исправлены после реального тестирования (см. harness_config.py).
 
 provider:
   # Имя провайдера и модель — склеиваются адаптером в строку вида
   # "anthropic/claude-sonnet-4-5#medium" (см. ниже про reasoning_effort).
+  # НЕ дублируйте имя провайдера в поле model (т.е. НЕ "anthropic/claude-...").
   name: anthropic
   model: claude-sonnet-4-5
   # Reasoning effort задаётся явно — не оставляем харнессу default.
@@ -33,15 +36,18 @@ harness:
   command:
     - opencode
     - run
+    # --standalone ОБЯЗАТЕЛЕН (проверено вживую): без него opencode
+    # использует долгоживущий background-сервис, который может не знать
+    # о только что созданном worktree (каждый прогон — новая директория)
+    # и упасть с "Agent not found" на только что сгенерированном агенте.
+    - --standalone
     - --agent
     - "{agent}"
     - --model
     - "{model}"
     - "{prompt}"
-  # Имя агента, которого движок генерирует в opencode.json внутри worktree
-  # (permission-карта: bash — allowlist паттернов из safety ниже, всё
-  # остальное запрещено; edit/webfetch/websearch — запрещены). Подробнее:
-  # src/review_agent/harness_config.py.
+  # Имя агента, которого движок генерирует в opencode.json внутри worktree.
+  # Подробнее про permission-карту — src/review_agent/harness_config.py.
   agent_name: reviewer
 
 report:
@@ -54,18 +60,34 @@ skills: []
 
 safety:
   output_language: ru
-  # ALLOWLIST паттернов для bash (не denylist!) — это и есть реальный
-  # enforcement-механизм OpenCode: "bash" в opencode.json принимает карту
-  # {паттерн: allow|deny|ask}, "*" ниже запрещает всё остальное. Deny-by-
-  # default надёжнее, чем перечислять запрещённые команды по именам (его
-  # легко обойти чуть другим вызовом).
-  allowed_bash_patterns:
-    - "git diff*"
-    - "git show*"
-    - "git log*"
-    - "git blame*"
-    - "git grep*"
-    - "git ls-files*"
-    - "git status*"
-    - "git branch*"
-    - "rg *"
+  # DENYLIST паттернов для bash (не allowlist!). Изначально задумывался
+  # allowlist (deny-by-default безопаснее denylist'а, который можно
+  # обойти чуть другим вызовом) — но проверено вживую на реальном
+  # облачном провайдере: если добавить "*": "deny" в карту permission.bash,
+  # bash-инструмент становится ПОЛНОСТЬЮ недоступен, даже для явно
+  # разрешённых паттернов. Без catch-all'а неперечисленные команды
+  # разрешены по умолчанию. Поэтому единственный рабочий вариант —
+  # denylist конкретных опасных паттернов (слабее принципиально, но это
+  # то, что реально работает в этой версии OpenCode). Подробности и
+  # живая проверка — src/review_agent/harness_config.py.
+  denied_bash_patterns:
+    - "npm *"
+    - "npx *"
+    - "yarn *"
+    - "pnpm *"
+    - "bun *"
+    - "*test*"
+    - "*build*"
+    - "*lint*"
+    - "tsc*"
+    - "node *"
+    - "python *"
+    - "python3 *"
+    - "ruby *"
+    - "rm *"
+    - "curl *"
+    - "wget *"
+    - "sh *"
+    - "bash *"
+    - "powershell *"
+    - "cmd *"

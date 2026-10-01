@@ -7,6 +7,9 @@ dist/
 .venv/
 venv/
 *.local.yaml
+# Personal config with your chosen provider/credentials references -
+# keep config.example.yaml as the tracked template instead.
+/config.yaml
 # Default review-agent output locations (config.example.yaml defaults)
 /reports/
 .review-agent-scratch*/

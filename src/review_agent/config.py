@@ -55,27 +55,48 @@ class ReportConfig:
 class SafetyConfig:
     """Read-only enforcement config.
 
-    Verified against a real OpenCode install: `bash` permission is
-    allowlist-by-pattern (deny-by-default is safer and more robust than a
-    denylist of known-bad command names, which is trivially bypassed by a
-    slightly different invocation). `allowed_bash_patterns` lists the
-    read-only inspection commands the agent may run; everything else is
-    denied. Patterns are OpenCode glob-style strings matched against the
-    full command line (see harness_config.py).
+    An allowlist-with-catch-all-deny was the original design (deny-by-
+    default is safer in principle than a denylist, which a slightly
+    different invocation can bypass) - but verified live against a real
+    OpenCode v2.0.21 install with a real cloud provider: adding a `"*":
+    "deny"` entry to the `bash` permission pattern map makes the bash
+    tool entirely UNAVAILABLE, even for explicitly allowed patterns, not
+    just filtered. Without any catch-all, an unmatched command is
+    implicitly ALLOWED by default - so a true allowlist is not currently
+    achievable through this mechanism.
+
+    `denied_bash_patterns` is therefore a DENYLIST (weaker in principle -
+    a sufficiently different invocation can evade a specific pattern -
+    but this is what OpenCode's real behavior supports): verified live
+    that an explicitly denied pattern (`npm *`) is genuinely blocked
+    ("Permission denied: shell", no side effect), while unlisted
+    read-only git commands still execute normally. Patterns are matched
+    against the full command line (see harness_config.py).
     """
 
     output_language: str = "ru"
-    allowed_bash_patterns: list[str] = dataclasses.field(
+    denied_bash_patterns: list[str] = dataclasses.field(
         default_factory=lambda: [
-            "git diff*",
-            "git show*",
-            "git log*",
-            "git blame*",
-            "git grep*",
-            "git ls-files*",
-            "git status*",
-            "git branch*",
-            "rg *",
+            "npm *",
+            "npx *",
+            "yarn *",
+            "pnpm *",
+            "bun *",
+            "*test*",
+            "*build*",
+            "*lint*",
+            "tsc*",
+            "node *",
+            "python *",
+            "python3 *",
+            "ruby *",
+            "rm *",
+            "curl *",
+            "wget *",
+            "sh *",
+            "bash *",
+            "powershell *",
+            "cmd *",
         ]
     )
 
@@ -164,11 +185,11 @@ def load_config(path: str | Path) -> Config:
     safety_kwargs: dict[str, Any] = {}
     if "output_language" in safety_data:
         safety_kwargs["output_language"] = safety_data["output_language"]
-    if "allowed_bash_patterns" in safety_data:
-        allowed = safety_data["allowed_bash_patterns"]
-        if not isinstance(allowed, list) or not all(isinstance(c, str) for c in allowed):
-            raise ConfigError("'safety.allowed_bash_patterns' must be a list of strings")
-        safety_kwargs["allowed_bash_patterns"] = allowed
+    if "denied_bash_patterns" in safety_data:
+        denied = safety_data["denied_bash_patterns"]
+        if not isinstance(denied, list) or not all(isinstance(c, str) for c in denied):
+            raise ConfigError("'safety.denied_bash_patterns' must be a list of strings")
+        safety_kwargs["denied_bash_patterns"] = denied
     safety = SafetyConfig(**safety_kwargs)
 
     return Config(provider=provider, harness=harness, report=report, skills=skills, safety=safety)

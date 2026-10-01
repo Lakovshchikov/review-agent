@@ -10,22 +10,30 @@ prompt, not system configuration"):
 2. `opencode.json`, written to the WORKTREE ROOT (OpenCode auto-discovers
    project config from the current directory - there is no
    "--agents-file"-style override flag, verified against a real install).
-   It defines a restricted custom agent whose `bash` permission is an
-   allowlist of read-only inspection patterns with everything else
-   denied by default.
+   It defines a restricted custom agent whose `bash` permission DENIES a
+   list of dangerous command patterns.
 
-   VERIFIED LIVE (local Ollama model via this restricted agent): asking
-   it to run a forbidden command (`npm test`) was refused - the model
-   reported no bash tool was available, and no side effect occurred.
-   NOT YET CONCLUSIVELY VERIFIED: that an explicitly allowed pattern
-   (`git log*` etc.) actually executes. The local models available for
-   this check appear to route tool calls through an OpenCode "Code Mode"
-   (a JS-sandboxed `execute` tool) that may not expose real git/bash
-   access at all, independent of this permission config - undocumented
-   in OpenCode's public docs as of this writing, and not reproducible
-   with a cloud provider (Claude/Codex) in this environment. Before
-   relying on this for an unattended run, re-verify the allow side with
-   the actual provider you configure (see tasks.md task 3.2/8.1).
+   WHY A DENYLIST, NOT AN ALLOWLIST (the original design): verified live
+   against a real OpenCode v2.0.21 install with a real cloud provider
+   (openai/gpt-5.6-terra) that an allowlist-with-catch-all-deny does not
+   work as the schema implies - adding a `"*": "deny"` entry to the
+   `bash` pattern map makes the bash tool entirely UNAVAILABLE, even for
+   patterns explicitly marked "allow". Without a catch-all, an unmatched
+   command is implicitly ALLOWED by default, so there is currently no
+   working way to express "deny everything except these patterns" to
+   OpenCode's bash permission. A denylist of specific dangerous patterns
+   (weaker in principle - a sufficiently different invocation can evade
+   a specific pattern - but what the tool actually supports) was
+   verified live instead: `git log`/`git status` etc. (not in the
+   denylist) executed and returned real output; `npm test` (explicitly
+   denied) was blocked ("Permission denied: shell") with no side effect.
+
+   Separately: invoking the harness WITHOUT `--standalone` appeared to
+   use a long-lived background service that can return "Agent not
+   found" for an agent defined in an opencode.json it had not yet
+   indexed (our worktree is a brand-new directory every run) - the
+   harness command in config.example.yaml includes `--standalone` for
+   exactly this reason, verified live to avoid the issue.
 
 Writing `opencode.json` into the worktree (not the scratch dir) is safe
 specifically because the whole worktree is a throwaway copy removed after
@@ -52,8 +60,9 @@ restricted agent defined in opencode.json at the worktree root (see
 harness_config.py). This note is a human-readable record of what that
 config enforces:
 
-- Shell commands are denied by default; only read-only inspection is
-  allowed: {allowed_bash_patterns}
+- Shell commands matching these patterns are denied: {denied_bash_patterns}
+  (everything else is allowed by default - see harness_config.py module
+  docstring for why this is a denylist, not an allowlist)
 - File edits, web fetch, and web search are denied.
 - Write all findings in: {output_language}
 """
@@ -69,7 +78,7 @@ def render_safety_note(worktree_path: Path, scratch_path: Path, safety: SafetyCo
     return _SAFETY_NOTE_TEMPLATE.format(
         worktree_path=worktree_path,
         scratch_path=scratch_path,
-        allowed_bash_patterns=", ".join(safety.allowed_bash_patterns),
+        denied_bash_patterns=", ".join(safety.denied_bash_patterns),
         output_language=safety.output_language,
     )
 
@@ -86,14 +95,12 @@ def write_safety_note(worktree_path: Path, scratch_path: Path, safety: SafetyCon
 def build_opencode_agent_config(safety: SafetyConfig, agent_name: str = "reviewer") -> dict:
     """Build the opencode.json content for a restricted review agent.
 
-    `bash` is a pattern map (verified against OpenCode's real config
-    schema): each configured pattern is allowed, "*" is denied, so any
-    command that doesn't match an explicit read-only pattern is blocked
-    by default - not a denylist of known-bad command names, which a
-    slightly different invocation trivially bypasses.
+    `bash` is a denylist pattern map with NO catch-all "*" entry - adding
+    one makes bash entirely unavailable in this OpenCode version (see
+    module docstring). Unmatched commands (including the read-only git
+    inspection the engine relies on) are allowed by default.
     """
-    bash_permissions = {pattern: "allow" for pattern in safety.allowed_bash_patterns}
-    bash_permissions["*"] = "deny"
+    bash_permissions = {pattern: "deny" for pattern in safety.denied_bash_patterns}
     return {
         "agent": {
             agent_name: {
