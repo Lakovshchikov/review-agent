@@ -7,15 +7,28 @@ effort are plain configuration values substituted into the configured
 command template - never hardcoded to a specific provider.
 
 Verified against a real OpenCode install (v2.0.21): there is no
-"--prompt-file" or "--agents-file" flag. The model string format is
-"provider/model#variant", where the variant controls reasoning effort
-(e.g. "anthropic/claude-sonnet-4-20250514#high",
-"openai/gpt-5#high") - so reasoning effort is folded into {model}
-here, not passed as a separate flag or env var. The prompt is passed as
-a positional message argument ({prompt}); {prompt_file} is still
-offered for harnesses that prefer a file. Safety enforcement is a
-separate generated opencode.json + "--agent {agent}" (see
-harness_config.py), not a flag on this command.
+"--agents-file" flag. The model string format is "provider/model#variant",
+where the variant controls reasoning effort (e.g.
+"anthropic/claude-sonnet-4-20250514#high", "openai/gpt-5#high") - so
+reasoning effort is folded into {model} here, not passed as a separate
+flag or env var. Safety enforcement is a separate generated
+opencode.json + "--agent {agent}" (see harness_config.py), not a flag on
+this command.
+
+The prompt MUST be passed via "--file {prompt_file}" in the configured
+command template, not as a positional "{prompt}" text argument - verified
+live to be a real bug, not a style preference: on Windows, "opencode"
+resolves through PATH to an "opencode.CMD" npm shim, and Windows can only
+execute a .CMD file by routing it through cmd.exe. cmd.exe parses its
+command line by line, so a multi-line positional argument gets silently
+truncated at the first newline - the model only ever saw the prompt's
+first line ("Role: Senior Software Engineer.") and answered that alone,
+with zero tool calls, while exiting 0 (no error surfaced). "--file"
+attaches the full content as a message attachment instead of a raw CLI
+token, bypassing cmd.exe's line-based parsing entirely - confirmed live
+that the model then receives and acts on the complete multi-paragraph
+prompt. This module still substitutes a "{prompt}" placeholder too, for
+any future harness whose CLI genuinely takes the message inline safely.
 """
 
 from __future__ import annotations
