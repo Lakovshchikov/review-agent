@@ -1,31 +1,48 @@
 # Пример конфигурации review-agent. Скопируйте в config.yaml и отредактируйте.
 # Полный контекст решений — см. /AGENTS.md.
+#
+# Синтаксис ниже сверен с реальным OpenCode CLI v2.0.21 (opencode --help,
+# opencode run --help, opencode debug agents, схема opencode.ai/config.json) —
+# не предположение, а проверенные факты.
 
 provider:
-  # Имя провайдера — чисто информационное, харнесс сам резолвит его в
-  # своей системе провайдеров (см. harness.command ниже).
+  # Имя провайдера и модель — склеиваются адаптером в строку вида
+  # "anthropic/claude-sonnet-4-5#medium" (см. ниже про reasoning_effort).
   name: anthropic
   model: claude-sonnet-4-5
   # Reasoning effort задаётся явно — не оставляем харнессу default.
+  # В OpenCode это и есть "variant" в модельной строке provider/model#variant
+  # (напр. #high, #medium, #low — см. https://opencode.ai/docs/models).
+  # ВАЖНО (проверено вживую): variant существует не у всех моделей — для
+  # локальных моделей (напр. Ollama) без явно заданных вариантов суффикс
+  # ломает вызов ("Variant unavailable"). Для таких моделей ставьте явно
+  # `reasoning_effort: null` — поле обязательно (ключ должен быть), но
+  # значение может быть null, если применимость явно не нужна.
   reasoning_effort: medium
   # Имя переменной окружения, где лежит ключ провайдера (сам ключ в
-  # конфиг не кладём).
+  # конфиг не кладём). Настраивается через `opencode auth login`.
   api_key_env: ANTHROPIC_API_KEY
 
 harness:
   # Шаблон команды харнесса. Плейсхолдеры подставляются адаптером:
-  #   {model}        -> "<provider.name>/<provider.model>"
-  #   {prompt_file}  -> путь к отрендеренному review-промпту
-  #   {agents_file}  -> путь к сгенерированному safety/runtime-конфигу
+  #   {model}  -> "<provider.name>/<provider.model>#<reasoning_effort>"
+  #   {prompt} -> отрендеренный review-промпт ЦЕЛИКОМ как текст
+  #              (opencode run принимает сообщение позиционным аргументом,
+  #              НЕ файлом — флага --prompt-file не существует)
+  #   {agent}  -> имя сгенерированного read-only агента (= harness.agent_name)
   command:
     - opencode
     - run
+    - --agent
+    - "{agent}"
     - --model
     - "{model}"
-    - --agents-file
-    - "{agents_file}"
-    - --prompt-file
-    - "{prompt_file}"
+    - "{prompt}"
+  # Имя агента, которого движок генерирует в opencode.json внутри worktree
+  # (permission-карта: bash — allowlist паттернов из safety ниже, всё
+  # остальное запрещено; edit/webfetch/websearch — запрещены). Подробнее:
+  # src/review_agent/harness_config.py.
+  agent_name: reviewer
 
 report:
   # {run_id} подставляется автоматически (уникален на каждый прогон).
@@ -37,14 +54,18 @@ skills: []
 
 safety:
   output_language: ru
-  forbidden_commands:
-    - yarn
-    - npm
-    - pnpm
-    - npx
-    - test
-    - lint
-    - stylelint
-    - build
-    - typecheck
-    - tsc
+  # ALLOWLIST паттернов для bash (не denylist!) — это и есть реальный
+  # enforcement-механизм OpenCode: "bash" в opencode.json принимает карту
+  # {паттерн: allow|deny|ask}, "*" ниже запрещает всё остальное. Deny-by-
+  # default надёжнее, чем перечислять запрещённые команды по именам (его
+  # легко обойти чуть другим вызовом).
+  allowed_bash_patterns:
+    - "git diff*"
+    - "git show*"
+    - "git log*"
+    - "git blame*"
+    - "git grep*"
+    - "git ls-files*"
+    - "git status*"
+    - "git branch*"
+    - "rg *"

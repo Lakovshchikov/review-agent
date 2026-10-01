@@ -1,12 +1,17 @@
 from pathlib import Path
 
 from review_agent.config import SafetyConfig
-from review_agent.harness_config import render_harness_runtime_config, write_harness_runtime_config
+from review_agent.harness_config import (
+    build_opencode_agent_config,
+    render_safety_note,
+    write_opencode_agent_config,
+    write_safety_note,
+)
 
 # Vocabulary that belongs to the REVIEW PROMPT (methodology), not the
-# generated runtime/safety config. If any of this leaks into the runtime
-# config, the engine violates "Review methodology lives in the per-run
-# prompt, not system configuration".
+# generated safety artifacts. If any of this leaks in, the engine
+# violates "Review methodology lives in the per-run prompt, not system
+# configuration".
 METHODOLOGY_MARKERS = [
     "SEV",
     "Blocker",
@@ -20,33 +25,58 @@ METHODOLOGY_MARKERS = [
 ]
 
 
-def test_runtime_config_contains_only_safety_content():
-    safety = SafetyConfig(output_language="ru", forbidden_commands=["npm", "yarn"])
+def test_safety_note_contains_only_safety_content():
+    safety = SafetyConfig(output_language="ru", allowed_bash_patterns=["git diff*", "rg *"])
     worktree_path = Path("/scratch/run-1/worktree")
     scratch_path = Path("/scratch/run-1")
-    rendered = render_harness_runtime_config(worktree_path, scratch_path, safety)
 
-    # Paths render platform-native (backslashes on Windows) - compare
-    # against str(Path(...)), not a hardcoded POSIX literal.
+    rendered = render_safety_note(worktree_path, scratch_path, safety)
+
     assert str(worktree_path) in rendered
     assert str(scratch_path) in rendered
-    assert "npm" in rendered
-    assert "yarn" in rendered
+    assert "git diff*" in rendered
+    assert "rg *" in rendered
     assert "ru" in rendered
-    assert "MUST NOT execute" in rendered
-    assert "MUST NOT access the network" in rendered
-    assert "MUST NOT publish anything to GitLab" in rendered
 
     for marker in METHODOLOGY_MARKERS:
-        assert marker not in rendered, f"runtime config leaked review methodology: {marker!r}"
+        assert marker not in rendered, f"safety note leaked review methodology: {marker!r}"
 
 
-def test_write_harness_runtime_config_creates_file(tmp_path):
+def test_write_safety_note_creates_file(tmp_path):
     scratch = tmp_path / "run-1"
     safety = SafetyConfig()
 
-    config_path = write_harness_runtime_config(tmp_path / "run-1" / "worktree", scratch, safety)
+    note_path = write_safety_note(tmp_path / "run-1" / "worktree", scratch, safety)
 
+    assert note_path.exists()
+    assert note_path.parent == scratch
+
+
+def test_opencode_agent_config_denies_everything_not_explicitly_allowed():
+    safety = SafetyConfig(allowed_bash_patterns=["git diff*", "git log*"])
+
+    config = build_opencode_agent_config(safety, agent_name="reviewer")
+
+    agent = config["agent"]["reviewer"]
+    assert agent["permission"]["bash"]["git diff*"] == "allow"
+    assert agent["permission"]["bash"]["git log*"] == "allow"
+    assert agent["permission"]["bash"]["*"] == "deny"
+    assert agent["permission"]["edit"] == "deny"
+    assert agent["permission"]["webfetch"] == "deny"
+    assert agent["permission"]["websearch"] == "deny"
+    assert agent["permission"]["read"] == "allow"
+
+
+def test_write_opencode_agent_config_writes_into_worktree_root(tmp_path):
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    safety = SafetyConfig()
+
+    config_path = write_opencode_agent_config(worktree_path, safety, agent_name="reviewer")
+
+    assert config_path == worktree_path / "opencode.json"
     assert config_path.exists()
-    assert config_path.parent == scratch
-    assert "MUST NOT execute" in config_path.read_text(encoding="utf-8")
+    import json
+
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "reviewer" in data["agent"]

@@ -61,7 +61,11 @@ def create_worktree(
     repo_path: Path, head_sha: str, scratch_dir: Path, run_id: str | None = None
 ) -> WorktreeHandle:
     run_id = run_id or _new_run_id()
-    worktree_path = scratch_dir / run_id / "worktree"
+    # Resolve to absolute: `git -C <repo_path> worktree add <path> ...`
+    # resolves a relative <path> against repo_path, not against this
+    # process's cwd - a relative scratch_dir would silently create the
+    # worktree somewhere other than where Python then looks for it.
+    worktree_path = (scratch_dir / run_id / "worktree").resolve()
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
     result = _run_git(repo_path, "worktree", "add", "--detach", str(worktree_path), head_sha)
     if result.returncode != 0:

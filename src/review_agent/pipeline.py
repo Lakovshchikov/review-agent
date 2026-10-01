@@ -12,7 +12,7 @@ from typing import Callable
 
 from review_agent.config import load_config
 from review_agent.harness import invoke_harness
-from review_agent.harness_config import write_harness_runtime_config
+from review_agent.harness_config import write_opencode_agent_config, write_safety_note
 from review_agent.prompt import (
     discover_docs_path,
     discover_repo_instructions_path,
@@ -55,13 +55,22 @@ def run_review(
         prompt_file = run_scratch_path / "prompt.md"
         prompt_file.write_text(prompt_text, encoding="utf-8")
 
-        agents_file = write_harness_runtime_config(handle.path, run_scratch_path, config.safety)
+        # Documentation only (logged to scratch); the actual enforcement is
+        # opencode.json below. See harness_config.py.
+        write_safety_note(handle.path, run_scratch_path, config.safety)
+
+        # Written into the worktree root (not scratch) because that's
+        # where OpenCode auto-discovers project config from - safe here
+        # because the whole worktree is removed with the rest of the run
+        # (see worktree.py) and the filename never shadows the target
+        # repo's own AGENTS.md/CLAUDE.md.
+        write_opencode_agent_config(handle.path, config.safety, agent_name=config.harness.agent_name)
 
         result = invoke_harness(
             config.harness,
             config.provider,
+            prompt=prompt_text,
             prompt_file=prompt_file,
-            agents_file=agents_file,
             worktree_path=handle.path,
             runner=harness_runner,
         )

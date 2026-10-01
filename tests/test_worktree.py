@@ -69,6 +69,26 @@ def test_review_never_touches_primary_working_copy(git_repo_with_base_and_head, 
     assert content_before == content_after
 
 
+def test_create_worktree_with_relative_scratch_dir_resolves_from_cwd(
+    git_repo_with_base_and_head, tmp_path, monkeypatch
+):
+    """Regression test: `git -C <repo> worktree add <path>` resolves a
+    relative <path> against <repo>, not against this process's cwd. A
+    relative scratch_dir must still land where Python expects it."""
+    fixture = git_repo_with_base_and_head
+    cwd = tmp_path / "somewhere_else"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    handle = create_worktree(fixture["repo"], fixture["head_sha"], Path("relative-scratch"))
+
+    assert handle.path.exists()
+    assert handle.path.is_absolute()
+    assert handle.path == (cwd / "relative-scratch" / handle.run_id / "worktree").resolve()
+    # Must NOT have been created relative to the repo instead.
+    assert not (fixture["repo"] / "relative-scratch").exists()
+
+
 def test_orphaned_worktree_removed_before_new_run_starts(git_repo_with_base_and_head, tmp_path):
     fixture = git_repo_with_base_and_head
     repo = fixture["repo"]

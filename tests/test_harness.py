@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from review_agent.config import HarnessConfig, ProviderConfig
-from review_agent.harness import HarnessError, invoke_harness
+from review_agent.harness import HarnessError, build_model_string, invoke_harness
 
 
 class _StubRunner:
@@ -22,22 +22,35 @@ class _StubRunner:
         )
 
 
+def test_build_model_string_includes_reasoning_effort_as_variant():
+    provider = ProviderConfig(name="anthropic", model="claude-sonnet-4-5", reasoning_effort="high")
+    assert build_model_string(provider) == "anthropic/claude-sonnet-4-5#high"
+
+
+def test_build_model_string_omits_suffix_when_reasoning_effort_is_none():
+    """A model without defined variants errors ("Variant unavailable") if
+    any #suffix is appended - verified live against a local Ollama model."""
+    provider = ProviderConfig(name="ollama", model="qwen3-14b-40k:latest", reasoning_effort=None)
+    assert build_model_string(provider) == "ollama/qwen3-14b-40k:latest"
+
+
 def test_invoke_harness_builds_correct_argv_and_returns_output():
+    # A name that won't resolve on PATH, so this test exercises
+    # placeholder substitution only - PATH resolution has its own test.
     harness = HarnessConfig(
-        command=["opencode", "run", "--model", "{model}", "--agents-file", "{agents_file}", "--prompt-file", "{prompt_file}"]
+        command=["not-a-real-harness-binary", "run", "--agent", "{agent}", "--model", "{model}", "{prompt}"]
     )
     provider = ProviderConfig(name="anthropic", model="claude-sonnet-4-5", reasoning_effort="medium")
     stub = _StubRunner(stdout="# Review\nfound 3 issues")
 
     prompt_file = Path("/scratch/run-1/prompt.md")
-    agents_file = Path("/scratch/run-1/harness-agents.md")
     worktree_path = Path("/scratch/run-1/worktree")
 
     result = invoke_harness(
         harness,
         provider,
+        prompt="Review this merge request.",
         prompt_file=prompt_file,
-        agents_file=agents_file,
         worktree_path=worktree_path,
         runner=stub,
     )
@@ -45,24 +58,46 @@ def test_invoke_harness_builds_correct_argv_and_returns_output():
     assert result.stdout == "# Review\nfound 3 issues"
     assert len(stub.calls) == 1
     argv = stub.calls[0]["argv"]
-    # Paths render platform-native (backslashes on Windows, forward slashes
-    # elsewhere) - compare against str(Path(...)), not a hardcoded literal.
     assert argv == [
-        "opencode",
+        "not-a-real-harness-binary",
         "run",
+        "--agent",
+        "reviewer",
         "--model",
-        "anthropic/claude-sonnet-4-5",
-        "--agents-file",
-        str(agents_file),
-        "--prompt-file",
-        str(prompt_file),
+        "anthropic/claude-sonnet-4-5#medium",
+        "Review this merge request.",
     ]
     assert stub.calls[0]["kwargs"]["cwd"] == str(worktree_path)
-    assert stub.calls[0]["kwargs"]["env"]["REVIEW_AGENT_REASONING_EFFORT"] == "medium"
+
+
+def test_invoke_harness_resolves_command_via_path(monkeypatch):
+    """Regression test: a bare command name must resolve through PATH
+    (shutil.which) before being handed to subprocess, since on Windows
+    many npm-installed CLIs are .CMD/.BAT shims that subprocess cannot
+    locate from a bare name without shell=True."""
+    harness = HarnessConfig(command=["opencode", "{prompt}"])
+    provider = ProviderConfig(name="anthropic", model="claude-sonnet-4-5", reasoning_effort="medium")
+    stub = _StubRunner()
+
+    monkeypatch.setattr(
+        "review_agent.harness.shutil.which",
+        lambda name: r"C:\nvm4w\nodejs\opencode.CMD" if name == "opencode" else None,
+    )
+
+    invoke_harness(
+        harness,
+        provider,
+        prompt="review",
+        prompt_file=Path("/p"),
+        worktree_path=Path("/w"),
+        runner=stub,
+    )
+
+    assert stub.calls[0]["argv"][0] == r"C:\nvm4w\nodejs\opencode.CMD"
 
 
 def test_invoke_harness_raises_on_nonzero_exit():
-    harness = HarnessConfig(command=["opencode", "run", "{model}"])
+    harness = HarnessConfig(command=["opencode", "run", "{model}", "{prompt}"])
     provider = ProviderConfig(name="anthropic", model="claude-sonnet-4-5", reasoning_effort="medium")
     stub = _StubRunner(returncode=1)
     stub._stdout = ""
@@ -71,8 +106,8 @@ def test_invoke_harness_raises_on_nonzero_exit():
         invoke_harness(
             harness,
             provider,
+            prompt="review",
             prompt_file=Path("/p"),
-            agents_file=Path("/a"),
             worktree_path=Path("/w"),
             runner=stub,
         )
@@ -80,7 +115,7 @@ def test_invoke_harness_raises_on_nonzero_exit():
 
 def test_provider_swap_is_configuration_only():
     """Switching providers must not require a different code path."""
-    harness = HarnessConfig(command=["opencode", "run", "--model", "{model}"])
+    harness = HarnessConfig(command=["opencode", "run", "--model", "{model}", "{prompt}"])
     stub = _StubRunner()
 
     claude_provider = ProviderConfig(name="anthropic", model="claude-sonnet-4-5", reasoning_effort="medium")
@@ -90,12 +125,12 @@ def test_provider_swap_is_configuration_only():
         result = invoke_harness(
             harness,
             provider,
+            prompt="review",
             prompt_file=Path("/p"),
-            agents_file=Path("/a"),
             worktree_path=Path("/w"),
             runner=stub,
         )
         assert result.stdout == "stub review output"
 
     models_used = [call["argv"][3] for call in stub.calls]
-    assert models_used == ["anthropic/claude-sonnet-4-5", "ollama/qwen2.5-coder:32b"]
+    assert models_used == ["anthropic/claude-sonnet-4-5#medium", "ollama/qwen2.5-coder:32b#high"]

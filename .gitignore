@@ -7,3 +7,6 @@ dist/
 .venv/
 venv/
 *.local.yaml
+# Default review-agent output locations (config.example.yaml defaults)
+/reports/
+.review-agent-scratch*/

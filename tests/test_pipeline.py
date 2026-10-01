@@ -1,5 +1,6 @@
 import re
 import subprocess
+from pathlib import Path
 
 import yaml
 
@@ -20,7 +21,10 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
                     "model": "claude-sonnet-4-5",
                     "reasoning_effort": "medium",
                 },
-                "harness": {"command": ["stub-harness", "{prompt_file}", "{agents_file}"]},
+                "harness": {
+                    "command": ["stub-harness", "--agent", "{agent}", "--model", "{model}", "{prompt}"],
+                    "agent_name": "reviewer",
+                },
                 "report": {"output_path": str(reports_dir / "review-{run_id}.md")},
             }
         ),
@@ -32,6 +36,12 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
     def stub_runner(argv, **kwargs):
         captured_argv["argv"] = argv
         captured_argv["cwd"] = kwargs.get("cwd")
+        # The restricted agent config must exist in the worktree (cwd) by
+        # the time the harness is invoked - that's what enforces read-only
+        # for a real OpenCode run (see harness_config.py).
+        captured_argv["opencode_json_existed_at_call_time"] = (
+            Path(kwargs["cwd"]) / "opencode.json"
+        ).exists()
         return subprocess.CompletedProcess(
             args=argv, returncode=0, stdout="# Review\n\nNo issues found.", stderr=""
         )
@@ -54,6 +64,10 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
     # The harness was actually invoked, inside the isolated worktree.
     assert captured_argv["argv"][0] == "stub-harness"
     assert captured_argv["cwd"] is not None
+    assert "--agent" in captured_argv["argv"] and "reviewer" in captured_argv["argv"]
+    assert "anthropic/claude-sonnet-4-5#medium" in captured_argv["argv"]
+    assert "Test MR" in captured_argv["argv"][-1]  # rendered prompt passed as positional text
+    assert captured_argv["opencode_json_existed_at_call_time"] is True
 
     # The worktree is gone afterward.
     run_id_match = re.search(r"review-(.+)\.md$", report_path.name)
