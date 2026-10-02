@@ -1,4 +1,4 @@
-﻿# Tasks
+# Tasks
 
 ## 1. Конфиг: переопределения проекта, `storage`, `claim_ttl_minutes`
 
