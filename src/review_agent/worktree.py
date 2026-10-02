@@ -53,6 +53,24 @@ def ensure_commits_available(repo_path: Path, *shas: str) -> None:
             )
 
 
+def fetch_ref(repo_path: Path, remote: str, refspec: str) -> None:
+    """`git fetch <remote> <refspec>` - makes a ref's commits available locally.
+
+    Used to bring in a merge request's head (`refs/merge-requests/<iid>/head`)
+    before a review: GitLab keeps that ref in the target project even for
+    MRs from forks, and fetching it does not depend on the server allowing
+    fetch-by-SHA. Only FETCH_HEAD and the object store change - never the
+    clone's branches, index, or working files. Knows nothing about GitLab
+    beyond the refspec it is handed.
+    """
+    result = _run_git(repo_path, "fetch", "--quiet", remote, refspec)
+    if result.returncode != 0:
+        raise WorktreeError(
+            f"Failed to fetch '{refspec}' from '{remote}' in '{repo_path}': "
+            f"{result.stderr.strip()}"
+        )
+
+
 def _new_run_id() -> str:
     return f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
 

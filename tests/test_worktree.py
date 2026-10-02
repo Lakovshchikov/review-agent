@@ -106,3 +106,56 @@ def test_orphaned_worktree_removed_before_new_run_starts(git_repo_with_base_and_
 
     assert not leftover.path.exists()
     assert leftover.path not in list_registered_worktrees(repo)
+
+
+def test_fetch_ref_brings_mr_head_without_touching_clone(tmp_path):
+    import subprocess
+
+    from review_agent.worktree import fetch_ref
+
+    def git(repo, *args):
+        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    # "GitLab": a bare repo whose MR head lives only under refs/merge-requests/.
+    upstream_work = tmp_path / "upstream-work"
+    upstream_work.mkdir()
+    git(upstream_work, "init", "-q")
+    git(upstream_work, "config", "user.email", "t@example.com")
+    git(upstream_work, "config", "user.name", "T")
+    (upstream_work / "f.txt").write_text("base\n", encoding="utf-8")
+    git(upstream_work, "add", "f.txt")
+    git(upstream_work, "commit", "-q", "-m", "base")
+    bare = tmp_path / "gitlab.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(upstream_work), str(bare)], check=True)
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(bare), str(clone)], check=True)
+
+    # MR commit pushed after the clone, only as refs/merge-requests/1/head.
+    (upstream_work / "f.txt").write_text("mr change\n", encoding="utf-8")
+    git(upstream_work, "commit", "-q", "-am", "mr")
+    mr_sha = git(upstream_work, "rev-parse", "HEAD")
+    git(upstream_work, "push", "-q", str(bare), "HEAD:refs/merge-requests/1/head")
+
+    head_before = git(clone, "rev-parse", "HEAD")
+    branch_before = git(clone, "rev-parse", "--abbrev-ref", "HEAD")
+    assert subprocess.run(["git", "-C", str(clone), "cat-file", "-e", f"{mr_sha}^{{commit}}"]).returncode != 0
+
+    fetch_ref(clone, "origin", "refs/merge-requests/1/head")
+
+    assert subprocess.run(["git", "-C", str(clone), "cat-file", "-e", f"{mr_sha}^{{commit}}"]).returncode == 0
+    assert git(clone, "rev-parse", "HEAD") == head_before
+    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == branch_before
+    assert git(clone, "status", "--porcelain") == ""
+    assert (clone / "f.txt").read_text(encoding="utf-8") == "base\n"
+
+
+def test_fetch_ref_failure_raises(git_repo_with_base_and_head):
+    import pytest
+
+    from review_agent.worktree import WorktreeError, fetch_ref
+
+    with pytest.raises(WorktreeError, match="refs/merge-requests/9/head"):
+        fetch_ref(git_repo_with_base_and_head["repo"], "no-such-remote", "refs/merge-requests/9/head")

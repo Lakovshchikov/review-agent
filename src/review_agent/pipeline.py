@@ -32,8 +32,16 @@ def run_review(
     config_path: Path,
     scratch_dir: Path,
     harness_runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    report_path: Path | None = None,
+    stderr_log_path: Path | None = None,
 ) -> Path:
-    """Run one full review and return the path to the written report."""
+    """Run one full review and return the path to the written report.
+
+    `report_path` overrides the configured `report.output_path` template
+    (the polling command names reports after project/MR/SHA), and
+    `stderr_log_path` overrides where the harness stderr log goes (so the
+    polling summary can point at it); the manual CLI leaves both unset.
+    """
     config = load_config(config_path)
 
     with managed_worktree(repo_path, base_sha, head_sha, scratch_dir) as handle:
@@ -80,8 +88,9 @@ def run_review(
         # it is the only way to diagnose a run that completes successfully
         # but produces a suspiciously thin report (e.g. the model stopped
         # after one line without exploring).
-        stderr_log_path = run_scratch_path / "harness-stderr.log"
+        stderr_log_path = stderr_log_path or run_scratch_path / "harness-stderr.log"
+        stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
         stderr_log_path.write_text(result.stderr, encoding="utf-8")
 
-        output_path = Path(config.report.output_path.format(run_id=handle.run_id))
+        output_path = report_path or Path(config.report.output_path.format(run_id=handle.run_id))
         return write_report(result.stdout, output_path)

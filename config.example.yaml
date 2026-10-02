@@ -103,3 +103,24 @@ safety:
     - "bash *"
     - "powershell *"
     - "cmd *"
+
+# Опрос GitLab — нужна только для `review-agent poll` (ручной режим
+# `review-agent --repo ... --base ... --head ...` эту секцию игнорирует).
+# Кредов здесь НЕТ намеренно: `glab` должен быть заранее авторизован на
+# машине запуска (`glab auth login --hostname <hostname>`), комментарии
+# публикуются от имени этой учётной записи.
+gitlab:
+  hostname: gitlab.example.local
+  # username'ы GitLab: MR берётся в работу, если ХОТЯ БЫ ОДИН из них
+  # назначен ревьюером (не автором и не assignee).
+  reviewers:
+    - ai-reviewer
+  # Draft-MR по умолчанию пропускаются.
+  review_drafts: false
+  # Отчёт короче этого числа символов (или пустой) НЕ публикуется — защита
+  # от "тихо пустого" отчёта (см. validation-notes.md Change 1).
+  min_report_chars: 200
+  projects:
+    - path: b2c/front-shopping           # путь проекта в GitLab
+      local_repo: C:/repos/front-shopping  # локальный клон; review-agent только делает в нём fetch
+      remote: origin                     # remote клона, указывающий на этот проект (по умолчанию origin)

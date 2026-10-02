@@ -102,12 +102,39 @@ class SafetyConfig:
 
 
 @dataclasses.dataclass(frozen=True)
+class GitLabProjectConfig:
+    # GitLab project path, e.g. "b2c/front-shopping"
+    path: str
+    # Local clone the review worktrees are created from. Never modified
+    # beyond fetching the MR ref (see worktree.fetch_ref).
+    local_repo: str
+    remote: str = "origin"
+
+
+@dataclasses.dataclass(frozen=True)
+class GitLabConfig:
+    """Settings for `review-agent poll` only - the manual review command ignores them.
+
+    No credentials here on purpose: `glab` must already be authenticated
+    on the machine (`glab auth login --hostname <host>`).
+    """
+
+    hostname: str
+    reviewers: list[str]
+    projects: list[GitLabProjectConfig]
+    review_drafts: bool = False
+    min_report_chars: int = 200
+
+
+@dataclasses.dataclass(frozen=True)
 class Config:
     provider: ProviderConfig
     harness: HarnessConfig
     report: ReportConfig
     skills: list[str] = dataclasses.field(default_factory=list)
     safety: SafetyConfig = dataclasses.field(default_factory=SafetyConfig)
+    # Optional: absent for manual-only configs (Change 1), required by `poll`.
+    gitlab: GitLabConfig | None = None
 
 
 def _require(data: dict[str, Any], key: str, section: str) -> Any:
@@ -192,4 +219,66 @@ def load_config(path: str | Path) -> Config:
         safety_kwargs["denied_bash_patterns"] = denied
     safety = SafetyConfig(**safety_kwargs)
 
-    return Config(provider=provider, harness=harness, report=report, skills=skills, safety=safety)
+    gitlab = _load_gitlab(data["gitlab"]) if data.get("gitlab") is not None else None
+
+    return Config(
+        provider=provider,
+        harness=harness,
+        report=report,
+        skills=skills,
+        safety=safety,
+        gitlab=gitlab,
+    )
+
+
+def _non_empty_str_list(value: Any, field: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
+    ):
+        raise ConfigError(f"'{field}' must be a non-empty list of non-empty strings")
+    return value
+
+
+def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
+    if not isinstance(gitlab_data, dict):
+        raise ConfigError("'gitlab' must be a mapping")
+
+    hostname = _require(gitlab_data, "hostname", "gitlab")
+    if not isinstance(hostname, str):
+        raise ConfigError("'gitlab.hostname' must be a string")
+
+    reviewers = _non_empty_str_list(gitlab_data.get("reviewers"), "gitlab.reviewers")
+
+    projects_data = gitlab_data.get("projects")
+    if not isinstance(projects_data, list) or not projects_data:
+        raise ConfigError("'gitlab.projects' must be a non-empty list")
+    projects = []
+    for index, project_data in enumerate(projects_data):
+        section = f"gitlab.projects[{index}]"
+        if not isinstance(project_data, dict):
+            raise ConfigError(f"'{section}' must be a mapping")
+        path = _require(project_data, "path", section)
+        local_repo = _require(project_data, "local_repo", section)
+        remote = project_data.get("remote", "origin")
+        if not all(isinstance(v, str) and v for v in (path, local_repo, remote)):
+            raise ConfigError(f"'{section}' path/local_repo/remote must be non-empty strings")
+        projects.append(GitLabProjectConfig(path=path, local_repo=local_repo, remote=remote))
+
+    review_drafts = gitlab_data.get("review_drafts", False)
+    if not isinstance(review_drafts, bool):
+        raise ConfigError("'gitlab.review_drafts' must be true or false")
+
+    min_report_chars = gitlab_data.get("min_report_chars", 200)
+    # bool is an int subclass - reject `min_report_chars: true` explicitly.
+    if isinstance(min_report_chars, bool) or not isinstance(min_report_chars, int) or min_report_chars < 0:
+        raise ConfigError("'gitlab.min_report_chars' must be a non-negative integer")
+
+    return GitLabConfig(
+        hostname=hostname,
+        reviewers=reviewers,
+        projects=projects,
+        review_drafts=review_drafts,
+        min_report_chars=min_report_chars,
+    )

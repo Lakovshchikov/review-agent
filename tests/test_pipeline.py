@@ -85,3 +85,38 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
 
     # The primary repo was never touched.
     assert (fixture["repo"] / "file.txt").read_text(encoding="utf-8") == "v2\n"
+
+
+def test_run_review_writes_report_to_explicit_path(git_repo_with_base_and_head, tmp_path):
+    fixture = git_repo_with_base_and_head
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "provider": {"name": "p", "model": "m", "reasoning_effort": None},
+                "harness": {"command": ["stub-harness", "{prompt_file}"]},
+                "report": {"output_path": str(tmp_path / "templated-{run_id}.md")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    explicit = tmp_path / "reports" / "b2c-front-shopping-544-abc.md"
+
+    def stub_runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, "# Отчёт", "")
+
+    result = run_review(
+        repo_path=fixture["repo"],
+        base_sha=fixture["base_sha"],
+        head_sha=fixture["head_sha"],
+        mr_title="t",
+        mr_description="d",
+        config_path=config_path,
+        scratch_dir=tmp_path / "scratch",
+        harness_runner=stub_runner,
+        report_path=explicit,
+    )
+
+    assert result == explicit
+    assert explicit.read_text(encoding="utf-8") == "# Отчёт"
+    assert not list(tmp_path.glob("templated-*.md"))
