@@ -45,7 +45,7 @@
   - `--scratch-dir` отвергается парсером;
   - после ручного прогона без `--debug` в `work_dir` нет ничего, кроме пустого `tmp/` (отчёт — по `report.output_path`).
 - [x] 2.3 В начале прохода под lock'ом удалять остатки упавших прогонов: `cleanup_orphaned_worktrees(local_repo, <work_dir>/tmp)` для каждого включённого проекта, затем всё содержимое `tmp/`. Проверка — тест на временном git-репозитории: «осиротевший» зарегистрированный worktree и файлы в `tmp/` удалены, `git worktree list` клона чист, ветка и `git status` клона не изменились.
-- [ ] 2.4 Обновить README:
+- [x] 2.4 Обновить README:
   - раскладка `<work_dir>`;
   - что удаляется сразу, что хранится и сколько;
   - `--debug`;
@@ -116,7 +116,7 @@
   - все проекты выключены → «нечего ревьюить», код 0;
   - ревьюеры и провайдер проекта доходят до адаптера и движка;
   - шапка содержит модель проекта.
-- [ ] 5.5 Описать в README раздел про claim:
+- [x] 5.5 Описать в README раздел про claim:
   - что видит разработчик в MR;
   - TTL и требование TTL ≥ лимита задачи;
   - что делать с повисшим claim (подождать TTL или удалить комментарий вручную).
@@ -125,8 +125,8 @@
 
 ## 6. Регистрация в Task Scheduler и наблюдение
 
-- [ ] 6.1 Написать `scripts/register-task.ps1` по design.md, решение 1: параметры (включая `-DryRun`, `-DebugMode`, `-Remove`), проверка exe и конфига до регистрации, `IgnoreNew`, `ExecutionTimeLimit`, `Register-ScheduledTask -Force`, итоговая подсказка. Проверка — статический тест в новом `tests/test_register_script.py`: скрипт содержит `poll --all`, не содержит `--include-closed`, содержит `IgnoreNew`, `-WorkingDirectory`, `--debug` и `--dry-run`.
-- [ ] 6.2 Добавить в README:
+- [x] 6.1 Написать `scripts/register-task.ps1` по design.md, решение 1: параметры (включая `-DryRun`, `-DebugMode`, `-Remove`), проверка exe и конфига до регистрации, `IgnoreNew`, `ExecutionTimeLimit`, `Register-ScheduledTask -Force`, итоговая подсказка. Проверка — статический тест в новом `tests/test_register_script.py`: скрипт содержит `poll --all`, не содержит `--include-closed`, содержит `IgnoreNew`, `-WorkingDirectory`, `--debug` и `--dry-run`.
+- [x] 6.2 Добавить в README:
   - раздел «Запуск по расписанию»: установка (сначала с `-DryRun`), обновление, удаление, почему без бандла, режимы `Interactive`/`-RunWhetherLoggedOn`;
   - раздел «Как следить за задачей» (design.md, решение 10): Планировщик заданий с кодами результата, журнал задач, Диспетчер задач, Монитор ресурсов, Просмотр событий, `Get-ScheduledTaskInfo`, логи прохода.
 

@@ -244,7 +244,19 @@ pytest                      # все тесты; харнесс и glab подм
 review-agent --help         # ручное ревью диапазона коммитов (без GitLab)
 review-agent poll --help    # проход опроса GitLab
 review-agent poll --dry-run # первый безопасный прогон на реальном GitLab
+review-agent poll --all --debug   # проход без вопросов, артефакты прогонов — в <work_dir>/debug/
 ```
+
+```powershell
+.\scripts\register-task.ps1 -DryRun -IntervalMinutes 15   # задача Task Scheduler (Windows), сначала dry-run
+.\scripts\register-task.ps1                               # боевая задача (обновляет ту же)
+.\scripts\register-task.ps1 -Remove                       # удалить задачу
+Get-ScheduledTaskInfo -TaskName review-agent-poll          # LastTaskResult: 0/1/2 = код выхода poll
+```
+
+Всё, что пишет review-agent, — в `storage.work_dir` конфига (по
+умолчанию `./.review-agent`): `tmp/` пуст после прохода, `logs/` — лог
+каждого прохода. Флага `--scratch-dir` больше нет.
 
 Внешние инструменты (не Python-зависимости): `git`, `opencode`
 (харнесс), `glab` (только для `poll`, заранее авторизованный —

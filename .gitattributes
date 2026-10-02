@@ -1,0 +1,2 @@
+# PowerShell scripts: CRLF and the UTF-8 BOM are kept as committed (see scripts/register-task.ps1).
+*.ps1 -text
