@@ -41,3 +41,9 @@ def test_no_window_by_default_with_show_console_option():
     assert '"pythonw.exe"' in SCRIPT and '"-m review_agent $argumentLine"' in SCRIPT
     # conhost --headless loses the exit code - must not be used to hide the window.
     assert "conhost.exe --headless" not in SCRIPT.replace("NOT conhost.exe --headless", "")
+
+
+def test_logon_trigger_makes_up_missed_passes():
+    assert "-AtLogOn -User $user" in SCRIPT
+    assert "[int]$LogonDelayMinutes = 5" in SCRIPT
+    assert "-Trigger $triggers" in SCRIPT

@@ -50,6 +50,7 @@
 | `-WorkingDirectory` | папка репозитория (родитель `scripts/`) | «Рабочая папка» задачи |
 | `-ReviewAgentPath` | `(Get-Command review-agent).Source` | абсолютный путь к запускателю |
 | `-ExecutionTimeLimitHours` | `4` | Task Scheduler завершит зависший проход |
+| `-LogonDelayMinutes` | `5` | второй триггер «при входе в систему» с задержкой: проход, пропущенный пока пользователь не вошёл, выполняется после входа; `0` — без триггера |
 | `-DryRun` | выкл. | добавляет `--dry-run` |
 | `-DebugMode` | выкл. | добавляет `--debug` (имя `-Debug` занято общим параметром PowerShell) |
 | `-ShowConsole` | выкл. | запускать `review-agent.exe` с консольным окном; по умолчанию — без окна через `pythonw.exe` (см. ниже) |
@@ -58,7 +59,7 @@
 
 **Что делает скрипт**
 - Действие: `New-ScheduledTaskAction -Execute <abs exe> -Argument "poll --all --config <cfg> [--dry-run] [--debug]" -WorkingDirectory <dir>`. Передавать `--include-closed` скрипт не умеет вообще.
-- Триггер: `-Once -At (Get-Date) -RepetitionInterval`.
+- Триггеры: `-Once -At (Get-Date) -RepetitionInterval` и `-AtLogOn -User <текущий>` с `Delay` (добавлено по итогам 7.6: пользователю не нужна работа без входа, но пропущенный проход должен выполниться после входа; `StartWhenAvailable` для `Interactive`-задачи этого не гарантирует, а лишний проход безвреден — `IgnoreNew`, lock, claim). Задержка — чтобы успел подняться VPN; проверено, что такой триггер регистрируется без прав администратора.
 - Настройки: `-MultipleInstances IgnoreNew`, `-ExecutionTimeLimit`, `-StartWhenAvailable`, работа от батареи разрешена.
 - Регистрация: `Register-ScheduledTask -Force`, то есть обновление на месте.
 - Проверки до регистрации: exe и конфиг (относительно `WorkingDirectory`) существуют, иначе ошибка без регистрации.

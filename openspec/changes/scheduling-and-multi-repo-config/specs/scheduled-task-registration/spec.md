@@ -28,6 +28,13 @@ The registered task SHALL always pass the automatic-mode flag and SHALL NOT pass
 - **WHEN** the user registers the task with the dry-run option
 - **THEN** the scheduled polling command SHALL run with both the automatic-mode and dry-run flags
 
+### Requirement: Missed passes run after logon
+The registered task SHALL also run the polling pass a configurable delay after the user logs on, so a pass missed while the user was logged off is made up; setting the delay to zero SHALL omit this trigger.
+
+#### Scenario: User logs on after a missed interval
+- **WHEN** a scheduled interval passed while the user was logged off and the user then logs on
+- **THEN** the task SHALL run one polling pass after the configured logon delay
+
 ### Requirement: Scheduled runs do not overlap
 The registered task SHALL be configured so that Task Scheduler does not start a new instance while the previous one is still running.
 

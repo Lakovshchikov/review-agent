@@ -17,6 +17,9 @@
         <ReviewAgentPath> directly and a console window shows the pass
       - starts in <WorkingDirectory> (relative paths in the config, including
         storage.work_dir, are resolved from there)
+      - also runs <LogonDelayMinutes> after the user logs on (0 = no logon
+        trigger), so a pass missed while logged off is made up at the next
+        logon; the delay gives the VPN time to come up
       - repeats every <IntervalMinutes>, never starts a second instance while
         one is still running (MultipleInstances IgnoreNew), and is stopped
         after <ExecutionTimeLimitHours>
@@ -51,6 +54,8 @@ param(
     [string]$ReviewAgentPath,
     [ValidateRange(1, 72)]
     [int]$ExecutionTimeLimitHours = 4,
+    [ValidateRange(0, 240)]
+    [int]$LogonDelayMinutes = 5,
     [switch]$DryRun,
     # Not "-Debug": that name is a PowerShell common parameter.
     [switch]$DebugMode,
@@ -133,17 +138,26 @@ $action = New-ScheduledTaskAction -Execute $execute -Argument $taskArguments -Wo
 # registering: Get-ScheduledTask <name> | Select -Expand Triggers).
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
+$triggers = @($trigger)
+$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+if ($LogonDelayMinutes -gt 0) {
+    # A pass missed while logged off (Interactive tasks only run in the
+    # user's session) is made up at the next logon. StartWhenAvailable
+    # alone does not reliably cover that case.
+    $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $logonTrigger.Delay = "PT$($LogonDelayMinutes)M"
+    $triggers += $logonTrigger
+}
 $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Hours $ExecutionTimeLimitHours) `
     -StartWhenAvailable `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries
-$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $logonType = if ($RunWhetherLoggedOn) { "S4U" } else { "Interactive" }
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType $logonType -RunLevel Limited
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers `
     -Settings $settings -Principal $principal -Force `
     -Description "review-agent: один проход опроса GitLab и ревью MR (poll --all). Создано scripts/register-task.ps1." | Out-Null
 
@@ -153,6 +167,7 @@ Write-Host "  окно:           $windowMode"
 Write-Host "  рабочая папка:  $WorkingDirectory"
 Write-Host "  интервал:       каждые $IntervalMinutes мин, без параллельных экземпляров, лимит $ExecutionTimeLimitHours ч"
 Write-Host "  пользователь:   $user ($logonType)"
+if ($LogonDelayMinutes -gt 0) { Write-Host "  при входе:      проход через $LogonDelayMinutes мин после входа в Windows" }
 Write-Host ""
 Write-Host "Как смотреть результат (подробно — README, «Как следить за задачей»):"
 Write-Host "  Get-ScheduledTaskInfo -TaskName $TaskName   # LastTaskResult: 0 ок, 1 какой-то MR упал, 2 проход не стартовал"
