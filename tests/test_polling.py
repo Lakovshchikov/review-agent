@@ -440,6 +440,35 @@ def test_second_pass_refused_while_first_running(setup, capsys):
     assert recorder.reviews == []
 
 
+def test_stdin_from_null_device_is_not_interactive():
+    # Regression: on Windows isatty() is True for NUL, so `poll < NUL`
+    # used to prompt instead of refusing.
+    from review_agent.polling import stdin_is_interactive
+
+    with open(os.devnull, encoding="utf-8") as null:
+        assert not stdin_is_interactive(null)
+
+
+def test_missing_or_fileless_stdin_is_not_interactive(monkeypatch):
+    import io
+    import sys
+
+    from review_agent.polling import stdin_is_interactive
+
+    monkeypatch.setattr(sys, "stdin", None)  # e.g. Task Scheduler without a console
+    assert not stdin_is_interactive()
+    assert not stdin_is_interactive(io.StringIO("1\n"))
+
+
+def test_stdin_from_file_is_not_interactive(tmp_path):
+    from review_agent.polling import stdin_is_interactive
+
+    answers = tmp_path / "answers.txt"
+    answers.write_text("1\n", encoding="utf-8")
+    with open(answers, encoding="utf-8") as f:
+        assert not stdin_is_interactive(f)
+
+
 def test_real_pid_check_for_current_and_dead_process():
     from review_agent.polling import pid_alive
 

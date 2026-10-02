@@ -24,7 +24,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 from review_agent.config import Config, ConfigError, GitLabProjectConfig, load_config
 from review_agent.gitlab import GitLabClient, GitLabError, MRCandidate, MRMetadata
@@ -108,6 +108,44 @@ def poll_lock(
         yield lock_path
     finally:
         lock_path.unlink(missing_ok=True)
+
+
+# -- interactive terminal detection ------------------------------------------
+
+
+def stdin_is_interactive(stream: Any = None) -> bool:
+    """True only if `stream` (default: sys.stdin) is a real interactive console.
+
+    `isatty()` alone is not enough on Windows - verified live: with stdin
+    redirected from NUL (`review-agent poll < NUL`), isatty() returns True
+    because NUL is a character device, so the interactive prompt ran, hit
+    EOF and exited 0 instead of refusing with a hint about --all. On
+    Windows the fd must therefore also be a console handle
+    (GetConsoleMode succeeds only for those). Under Task Scheduler stdin
+    may be missing entirely (sys.stdin is None) - also "not interactive".
+    """
+    stream = sys.stdin if stream is None else stream
+    if stream is None:
+        return False
+    try:
+        fd = stream.fileno()
+        if not os.isatty(fd):
+            return False
+    except (AttributeError, OSError, ValueError):
+        return False
+    if os.name != "nt":
+        return True
+
+    import ctypes
+    import msvcrt
+
+    try:
+        handle = msvcrt.get_osfhandle(fd)
+    except OSError:
+        return False
+    mode = ctypes.c_ulong()
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    return bool(kernel32.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode)))
 
 
 # -- outcomes ----------------------------------------------------------------
@@ -285,7 +323,7 @@ def run_poll(
     fetch_fn: Callable[[Path, str, str], None] | None = None,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
-    stdin_isatty: Callable[[], bool] = lambda: sys.stdin.isatty(),
+    stdin_isatty: Callable[[], bool] = lambda: stdin_is_interactive(),
     is_alive: Callable[[int], bool] = pid_alive,
     is_git_repo: Callable[[Path], bool] = _is_git_repo,
 ) -> int:
