@@ -48,3 +48,10 @@ The script SHALL refuse to register the task, with an error naming the problem, 
 #### Scenario: Executable not found
 - **WHEN** the review-agent executable is not on PATH and no explicit path is given
 - **THEN** the script SHALL exit with an error explaining how to pass the executable path, and SHALL NOT register a task
+
+### Requirement: Debug registration option
+The script SHALL allow registering the task in debug mode, in which the scheduled polling command runs with the debug flag.
+
+#### Scenario: Debug registration
+- **WHEN** the user registers the task with the debug option
+- **THEN** the scheduled polling command SHALL run with both the automatic-mode and debug flags
