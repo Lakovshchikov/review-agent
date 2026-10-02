@@ -56,6 +56,7 @@ from review_agent.housekeeping import (
 )
 from review_agent.lock import LOCK_FILE_NAME, PollLockBusy, pid_alive, poll_lock  # noqa: F401
 from review_agent.passlog import PassLog, pass_log
+from review_agent.proc import no_window_flags
 from review_agent.pipeline import ReviewResult, run_review
 from review_agent.publishing import (
     format_claim_comment,
@@ -167,6 +168,7 @@ def _is_git_repo(path: Path) -> bool:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        creationflags=no_window_flags(),
     )
     return result.returncode == 0
 

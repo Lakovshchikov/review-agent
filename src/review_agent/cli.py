@@ -126,7 +126,22 @@ def poll_main(argv: list[str]) -> int:
     )
 
 
+def _ensure_streams() -> None:
+    """Under pythonw.exe (scheduled task without a window) there is no stdout/stderr.
+
+    The pass log does not need them, but print() and argparse errors would
+    crash on None - send that output nowhere instead.
+    """
+    import os
+
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_streams()
     if argv is None:
         argv = sys.argv[1:]
     # Subcommand detection by first token keeps the validated manual form

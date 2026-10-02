@@ -10,7 +10,11 @@
     the test-only --include-closed flag.
 
     The task:
-      - runs `<ReviewAgentPath> poll --all --config <ConfigPath> [--dry-run] [--debug]`
+      - runs `poll --all --config <ConfigPath> [--dry-run] [--debug]` WITHOUT a
+        console window by default: through `pythonw.exe -m review_agent` of the
+        same Python as <ReviewAgentPath> (no window to close by accident; the
+        exit code 0/1/2 still reaches Task Scheduler). With -ShowConsole it runs
+        <ReviewAgentPath> directly and a console window shows the pass
       - starts in <WorkingDirectory> (relative paths in the config, including
         storage.work_dir, are resolved from there)
       - repeats every <IntervalMinutes>, never starts a second instance while
@@ -51,6 +55,8 @@ param(
     # Not "-Debug": that name is a PowerShell common parameter.
     [switch]$DebugMode,
     [switch]$RunWhetherLoggedOn,
+    # Show a console window during each pass (default: no window, see .DESCRIPTION).
+    [switch]$ShowConsole,
     [switch]$Remove
 )
 
@@ -99,7 +105,29 @@ if ($DryRun) { $arguments += "--dry-run" }
 if ($DebugMode) { $arguments += "--debug" }
 $argumentLine = $arguments -join " "
 
-$action = New-ScheduledTaskAction -Execute $ReviewAgentPath -Argument $argumentLine -WorkingDirectory $WorkingDirectory
+if ($ShowConsole) {
+    $execute = $ReviewAgentPath
+    $taskArguments = $argumentLine
+    $windowMode = "с консольным окном"
+} else {
+    # pythonw.exe of the Python that review-agent.exe belongs to: next to it
+    # in a venv (.venv\Scripts\), one level up for a plain install
+    # (Python310\Scripts\review-agent.exe -> Python310\pythonw.exe).
+    # NOT conhost.exe --headless: verified that it always exits 0, so the
+    # task result would hide failures.
+    $scriptsDir = Split-Path -Parent $ReviewAgentPath
+    $pythonw = @((Join-Path $scriptsDir "pythonw.exe"), (Join-Path (Split-Path -Parent $scriptsDir) "pythonw.exe")) |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $pythonw) {
+        throw ("pythonw.exe не найден рядом с '$ReviewAgentPath' (ни в той же папке, ни уровнем выше). " +
+               "Запустите с -ShowConsole, чтобы задача запускала review-agent.exe напрямую (с окном).")
+    }
+    $execute = $pythonw
+    $taskArguments = "-m review_agent $argumentLine"
+    $windowMode = "без окна (pythonw)"
+}
+
+$action = New-ScheduledTaskAction -Execute $execute -Argument $taskArguments -WorkingDirectory $WorkingDirectory
 # Starts now and repeats every IntervalMinutes. No -RepetitionDuration:
 # on current Windows versions that means "indefinitely" (check after
 # registering: Get-ScheduledTask <name> | Select -Expand Triggers).
@@ -120,7 +148,8 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Description "review-agent: один проход опроса GitLab и ревью MR (poll --all). Создано scripts/register-task.ps1." | Out-Null
 
 Write-Host "Задача '$TaskName' зарегистрирована (или обновлена):"
-Write-Host "  команда:        `"$ReviewAgentPath`" $argumentLine"
+Write-Host "  команда:        `"$execute`" $taskArguments"
+Write-Host "  окно:           $windowMode"
 Write-Host "  рабочая папка:  $WorkingDirectory"
 Write-Host "  интервал:       каждые $IntervalMinutes мин, без параллельных экземпляров, лимит $ExecutionTimeLimitHours ч"
 Write-Host "  пользователь:   $user ($logonType)"

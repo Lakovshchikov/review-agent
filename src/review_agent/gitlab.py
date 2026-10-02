@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
+from review_agent.proc import no_window_flags
+
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
@@ -140,7 +142,12 @@ class GitLabClient:
         env["GITLAB_HOST"] = self.hostname
         try:
             result = self._runner(
-                argv, capture_output=True, text=True, encoding="utf-8", env=env
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env=env,
+                creationflags=no_window_flags(),
             )
         except OSError as exc:
             raise GitLabError(f"Failed to run glab: {exc}") from exc

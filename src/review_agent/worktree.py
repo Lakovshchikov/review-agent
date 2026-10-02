@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from review_agent.proc import no_window_flags
+
 
 class WorktreeError(RuntimeError):
     """Raised when a git worktree operation fails."""
@@ -33,6 +35,7 @@ def _run_git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
         ["git", "-C", str(repo_path), *args],
         capture_output=True,
         text=True,
+        creationflags=no_window_flags(),
     )
 
 

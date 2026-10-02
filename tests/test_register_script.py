@@ -34,3 +34,10 @@ def test_checks_executable_and_config_before_registering():
 def test_saved_as_utf8_with_bom_for_windows_powershell():
     raw = (Path(__file__).resolve().parents[1] / "scripts" / "register-task.ps1").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf")
+
+
+def test_no_window_by_default_with_show_console_option():
+    assert "[switch]$ShowConsole" in SCRIPT
+    assert '"pythonw.exe"' in SCRIPT and '"-m review_agent $argumentLine"' in SCRIPT
+    # conhost --headless loses the exit code - must not be used to hide the window.
+    assert "conhost.exe --headless" not in SCRIPT.replace("NOT conhost.exe --headless", "")

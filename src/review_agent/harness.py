@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Callable
 
 from review_agent.config import HarnessConfig, ProviderConfig
+from review_agent.proc import no_window_flags
 
 
 class HarnessError(RuntimeError):
@@ -140,7 +141,15 @@ def invoke_harness(
     # locale.getpreferredencoding() (cp1252 on Windows), garbling OpenCode's
     # UTF-8 output (em-dashes, curly quotes) into mojibake - verified live.
     result = runner(
-        argv, capture_output=True, text=True, encoding="utf-8", cwd=str(worktree_path), env=env
+        argv,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(worktree_path),
+        env=env,
+        # No console of our own (pythonw under Task Scheduler) -> keep
+        # opencode from popping up a window; see proc.py.
+        creationflags=no_window_flags(),
     )
     if result.returncode != 0:
         raise HarnessError(

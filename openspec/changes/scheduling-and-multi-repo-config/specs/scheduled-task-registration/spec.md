@@ -49,6 +49,17 @@ The script SHALL refuse to register the task, with an error naming the problem, 
 - **WHEN** the review-agent executable is not on PATH and no explicit path is given
 - **THEN** the script SHALL exit with an error explaining how to pass the executable path, and SHALL NOT register a task
 
+### Requirement: Scheduled runs without a console window by default
+By default the registered task SHALL run the polling pass without showing a console window and SHALL still report the polling command's exit status as the task result. The script SHALL offer an option to show a console window instead.
+
+#### Scenario: Default registration
+- **WHEN** the task is registered without the show-console option and a scheduled pass runs while the user is logged on
+- **THEN** no console window SHALL appear for the pass or for any process it starts, and the task's last result SHALL equal the polling command's exit status
+
+#### Scenario: Show-console registration
+- **WHEN** the task is registered with the show-console option
+- **THEN** each scheduled pass SHALL run in a visible console window
+
 ### Requirement: Debug registration option
 The script SHALL allow registering the task in debug mode, in which the scheduled polling command runs with the debug flag.
 
