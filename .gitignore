@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
@@ -13,5 +13,6 @@ venv/
 # Default review-agent output locations (config.example.yaml defaults)
 /reports/
 /.review-agent/
+/.review-agent-*/
 # Old Change 1-2 scratch folder (no longer used; delete it once by hand)
 .review-agent-scratch*/
