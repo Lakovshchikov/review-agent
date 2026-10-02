@@ -38,11 +38,11 @@ class FakeGitLab:
             raise GitLabError(self.preflight_error)
         return self.bot
 
-    def list_review_candidates(self, project, reviewers, *, review_drafts):
+    def list_review_candidates(self, project, reviewers, *, review_drafts, include_closed=False):
         result = [
-            MRCandidate(project, iid, mr["title"], mr.get("draft", False))
+            MRCandidate(project, iid, mr["title"], mr.get("draft", False), mr.get("state", "opened"))
             for (p, iid), mr in sorted(self.mrs.items())
-            if p == project
+            if p == project and (include_closed or mr.get("state", "opened") == "opened")
         ]
         return [c for c in result if review_drafts or not c.draft]
 
@@ -60,6 +60,7 @@ class FakeGitLab:
             author=mr.get("author", "ivanov"),
             web_url=f"https://gitlab.local/{project}/-/merge_requests/{iid}",
             draft=mr.get("draft", False),
+            state=mr.get("state", "opened"),
         )
 
     def get_diff_refs(self, project, iid):
@@ -257,6 +258,69 @@ def test_interactive_reviewed_mr_disappears_from_list(setup):
     text = "\n".join(output)
     assert "merge_requests/1\n" not in text + "\n"
     assert "Найдено MR, где ревьюер назначен: 4" in text
+
+
+# -- closed / merged MRs -----------------------------------------------------
+
+
+def _mixed_states():
+    return {
+        ("b2c/front", 1): _mr("открытый"),
+        ("b2c/front", 2): _mr("смёрженный", state="merged"),
+        ("b2c/front", 3): _mr("закрытый", state="closed"),
+    }
+
+
+def test_closed_and_merged_ignored_by_default(setup):
+    output = []
+    assert _poll(setup, FakeGitLab(_mixed_states()), Recorder(), answers=["q"], output=output) == EXIT_OK
+    text = "\n".join(output)
+    assert "Найдено MR, где ревьюер назначен: 1" in text
+    assert "смёрженный" not in text and "закрытый" not in text
+
+
+def test_include_closed_lists_them_with_state_and_reviews_selected(setup):
+    gitlab = FakeGitLab(_mixed_states())
+    output = []
+
+    assert _poll(setup, gitlab, Recorder(), answers=["2"], output=output, include_closed=True) == EXIT_OK
+
+    text = "\n".join(output)
+    assert "Найдено MR, где ревьюер назначен: 3" in text
+    assert "[merged] смёрженный" in text and "[closed] закрытый" in text
+    assert "[opened]" not in text
+    assert [(p, i) for p, i, _ in gitlab.posted] == [("b2c/front", 2)]
+
+
+def test_failed_mr_ref_fetch_is_not_fatal(setup):
+    # GitLab may have cleaned up refs/merge-requests/<iid>/head of an old
+    # merged MR; the engine then finds the commits itself.
+    gitlab = FakeGitLab({("b2c/front", 2): _mr(state="merged")})
+    recorder = Recorder()
+
+    def failing_fetch(repo, remote, refspec):
+        raise RuntimeError("couldn't find remote ref")
+
+    recorder.fetch = failing_fetch
+
+    assert _poll(setup, gitlab, recorder, review_all=True, include_closed=True) == EXIT_OK
+    assert len(recorder.reviews) == 1
+    assert len(gitlab.posted) == 1
+
+
+def test_failed_fetch_reason_is_kept_when_review_then_fails(setup):
+    gitlab = FakeGitLab({("b2c/front", 2): _mr(state="merged", head="2" * 40)})
+    recorder = Recorder(fail_for={"2" * 40})
+
+    def failing_fetch(repo, remote, refspec):
+        raise RuntimeError("couldn't find remote ref")
+
+    recorder.fetch = failing_fetch
+    output = []
+
+    assert _poll(setup, gitlab, recorder, review_all=True, include_closed=True, output=output) == EXIT_FAILURES
+    line = next(l for l in output if "[failed]" in l)
+    assert "couldn't find remote ref" in line and "harness exploded" in line
 
 
 # -- failures and isolation --------------------------------------------------

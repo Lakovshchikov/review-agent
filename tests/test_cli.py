@@ -38,6 +38,10 @@ def test_poll_subcommand_passes_flags_to_orchestrator(monkeypatch):
 
     assert cli.main(["poll"]) == 0
     assert captured["review_all"] is False and captured["dry_run"] is False
+    assert captured["include_closed"] is False
+
+    assert cli.main(["poll", "--include-closed"]) == 0
+    assert captured["include_closed"] is True
 
 
 def test_manual_form_still_parses_without_poll(monkeypatch, tmp_path):

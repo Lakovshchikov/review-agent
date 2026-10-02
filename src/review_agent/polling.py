@@ -168,7 +168,10 @@ def _select(
     output_fn(f"\nНайдено MR, где ревьюер назначен: {len(pending)}\n")
     for number, item in enumerate(pending, start=1):
         meta = item.metadata
-        output_fn(f"  {number}) {item.project.path} !{meta.iid}  {meta.title}  (автор: {meta.author})")
+        state = "" if meta.state == "opened" else f"[{meta.state}] "
+        output_fn(
+            f"  {number}) {item.project.path} !{meta.iid}  {state}{meta.title}  (автор: {meta.author})"
+        )
         output_fn(f"     {meta.web_url}")
     output_fn("")
     while True:
@@ -199,10 +202,18 @@ def _review_one(
     project = item.project
     meta = item.metadata
     outcome = Outcome(project=project.path, iid=meta.iid, status="failed", web_url=meta.web_url)
+    fetch_warning = ""
     try:
         refs = client.get_diff_refs(project.path, meta.iid)
         local_repo = Path(project.local_repo)
-        fetch_fn(local_repo, project.remote, f"refs/merge-requests/{meta.iid}/head")
+        try:
+            fetch_fn(local_repo, project.remote, f"refs/merge-requests/{meta.iid}/head")
+        except Exception as exc:  # noqa: BLE001
+            # Not fatal: GitLab may clean up MR refs of old closed/merged
+            # MRs. The engine still looks for both commits locally and
+            # tries `git fetch <sha>` itself (worktree.ensure_commits_available);
+            # for a merged MR they are usually already in the target branch.
+            fetch_warning = f"fetch refs/merge-requests/{meta.iid}/head не удался ({exc}); "
 
         reports_dir = Path(config.report.output_path).parent
         stem = f"{_slug(project.path)}-{meta.iid}-{refs.head_sha[:12]}"
@@ -258,7 +269,7 @@ def _review_one(
         return outcome
     except Exception as exc:  # noqa: BLE001 - per-MR isolation is the point
         outcome.status = "failed"
-        outcome.reason = f"{type(exc).__name__}: {exc}"
+        outcome.reason = f"{fetch_warning}{type(exc).__name__}: {exc}"
         return outcome
 
 
@@ -268,6 +279,7 @@ def run_poll(
     scratch_dir: Path,
     review_all: bool = False,
     dry_run: bool = False,
+    include_closed: bool = False,
     client_factory: Callable[[str], GitLabClient] = GitLabClient,
     review_fn: Callable[..., Path] = run_review,
     fetch_fn: Callable[[Path, str, str], None] | None = None,
@@ -310,6 +322,7 @@ def run_poll(
                 scratch_dir=scratch_dir,
                 review_all=review_all,
                 dry_run=dry_run,
+                include_closed=include_closed,
                 client_factory=client_factory,
                 review_fn=review_fn,
                 fetch_fn=fetch_fn,
@@ -329,6 +342,7 @@ def _run_locked(
     scratch_dir: Path,
     review_all: bool,
     dry_run: bool,
+    include_closed: bool,
     client_factory: Callable[[str], GitLabClient],
     review_fn: Callable[..., Path],
     fetch_fn: Callable[[Path, str, str], None],
@@ -360,7 +374,10 @@ def _run_locked(
             continue
         try:
             candidates = client.list_review_candidates(
-                project.path, gitlab_config.reviewers, review_drafts=gitlab_config.review_drafts
+                project.path,
+                gitlab_config.reviewers,
+                review_drafts=gitlab_config.review_drafts,
+                include_closed=include_closed,
             )
         except GitLabError as exc:
             outcomes.append(Outcome(project=project.path, iid=None, status="failed", reason=str(exc)))

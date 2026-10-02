@@ -85,6 +85,14 @@ def build_poll_arg_parser() -> argparse.ArgumentParser:
         help="Do everything except writing to GitLab: reports and would-be comments stay local.",
     )
     parser.add_argument(
+        "--include-closed",
+        action="store_true",
+        help=(
+            "Also find closed and merged MRs, not only open ones - for testing on "
+            "MRs where a bot comment bothers nobody."
+        ),
+    )
+    parser.add_argument(
         "--config",
         default="config.yaml",
         help="Path to the review-agent YAML config with a 'gitlab' section (default: config.yaml).",
@@ -107,6 +115,7 @@ def poll_main(argv: list[str]) -> int:
         scratch_dir=Path(args.scratch_dir),
         review_all=args.review_all,
         dry_run=args.dry_run,
+        include_closed=args.include_closed,
     )
 
 

@@ -112,6 +112,15 @@ def test_candidate_query_filters_by_state_and_reviewer():
     assert "state=opened" in endpoint and "reviewer_username=ai-reviewer" in endpoint
 
 
+def test_include_closed_queries_all_states_and_keeps_state():
+    stub = StubGlab([("merge_requests?", 0, json.dumps([{"iid": 3, "title": "t", "state": "merged"}]), "")])
+    candidates = _client(stub).list_review_candidates(
+        "a/b", ["ai-reviewer"], review_drafts=False, include_closed=True
+    )
+    assert "state=all" in stub.calls[0]["argv"][-1]
+    assert candidates[0].state == "merged"
+
+
 def test_post_note_sends_body_from_file_not_argv(tmp_path):
     stub = StubGlab([("--method POST", 0, "{}", "")])
     report = "## Находки\n\n" + "очень длинный отчёт\n" * 2000

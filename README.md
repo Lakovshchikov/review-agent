@@ -253,7 +253,7 @@ review-agent \
 ## Опрос GitLab: `review-agent poll`
 
 ```bash
-review-agent poll [--all] [--dry-run] [--config config.yaml] [--scratch-dir .review-agent-scratch]
+review-agent poll [--all] [--dry-run] [--include-closed] [--config config.yaml] [--scratch-dir .review-agent-scratch]
 ```
 
 Один вызов = **один проход** и выход (без цикла и демона — кто вызывает
@@ -294,6 +294,15 @@ review-agent poll [--all] [--dry-run] [--config config.yaml] [--scratch-dir .rev
 `--dry-run` работает с обоими режимами: всё как обычно, но в GitLab
 ничего не пишется. Рекомендуемый первый запуск на реальном GitLab:
 `review-agent poll --dry-run`.
+
+`--include-closed` — искать не только открытые, но и **закрытые и
+смёрженные** MR (для тестирования на MR, где комментарий бота никому не
+мешает). Работает с обоими режимами; у таких MR в списке видно состояние
+(`[merged]`, `[closed]`), остальные правила (ревьюер, draft, маркер) те же.
+Если GitLab уже удалил `refs/merge-requests/<iid>/head` старого MR, это не
+ошибка: движок ищет коммиты в клоне сам (для смёрженного MR без squash
+они обычно уже есть в целевой ветке). Пример:
+`review-agent poll --include-closed --dry-run`.
 
 ### Идемпотентность: маркер в комментарии
 

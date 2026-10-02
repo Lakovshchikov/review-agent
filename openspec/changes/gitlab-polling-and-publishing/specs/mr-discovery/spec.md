@@ -18,12 +18,27 @@ The system SHALL consider for review only open merge requests, in the configured
 - **THEN** the system SHALL NOT review that MR
 
 #### Scenario: Closed or merged MR is ignored
-- **WHEN** an MR with a configured reviewer is closed or merged
+- **WHEN** an MR with a configured reviewer is closed or merged and the include-closed flag is not set
 - **THEN** the system SHALL NOT review that MR
 
 #### Scenario: MR matched by several configured reviewers is reviewed once
 - **WHEN** an open MR lists two or more configured reviewer users as reviewers
 - **THEN** the system SHALL treat it as a single review candidate and review it at most once per pass
+
+### Requirement: Closed and merged merge requests on request
+When the polling command is invoked with the include-closed flag, the system SHALL also consider closed and merged merge requests with a configured reviewer as review candidates, and SHALL show each candidate's state when listing them. All other discovery rules (reviewer filter, drafts, already-reviewed markers) SHALL apply unchanged.
+
+#### Scenario: Merged MR found with the flag
+- **WHEN** the include-closed flag is set and a merged MR has a configured reviewer and no review-state marker
+- **THEN** the system SHALL treat it as a review candidate and SHALL label it as merged in the interactive list
+
+#### Scenario: Merged MR already reviewed
+- **WHEN** the include-closed flag is set and a merged MR already carries a valid review-state marker
+- **THEN** the system SHALL NOT review it again
+
+#### Scenario: MR ref no longer available
+- **WHEN** GitLab no longer serves the MR's head ref for an old closed or merged MR, but both review commits are available to the local clone
+- **THEN** the system SHALL still run the review against those commits
 
 ### Requirement: Draft merge requests are skipped by default
 The system SHALL skip merge requests marked as draft unless configuration explicitly enables reviewing drafts.

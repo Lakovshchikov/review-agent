@@ -44,6 +44,7 @@ class MRCandidate:
     iid: int
     title: str
     draft: bool
+    state: str = "opened"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -54,6 +55,8 @@ class MRMetadata:
     author: str
     web_url: str
     draft: bool
+    # "opened" | "closed" | "merged" | "locked"
+    state: str = "opened"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -183,24 +186,36 @@ class GitLabClient:
         return user["username"]
 
     def list_review_candidates(
-        self, project: str, reviewers: list[str], *, review_drafts: bool
+        self,
+        project: str,
+        reviewers: list[str],
+        *,
+        review_drafts: bool,
+        include_closed: bool = False,
     ) -> list[MRCandidate]:
         """Open MRs in `project` where any of `reviewers` is assigned as reviewer.
 
         One query per reviewer, merged by iid: an MR with two of our
-        reviewers is one candidate.
+        reviewers is one candidate. `include_closed` widens the search to
+        closed and merged MRs too (state=all) - for testing on MRs where a
+        bot comment bothers nobody.
         """
+        state = "all" if include_closed else "opened"
         by_iid: dict[int, MRCandidate] = {}
         for reviewer in reviewers:
             endpoint = (
                 f"projects/{encode_project(project)}/merge_requests"
-                f"?state=opened&reviewer_username={quote(reviewer, safe='')}&per_page=100"
+                f"?state={state}&reviewer_username={quote(reviewer, safe='')}&per_page=100"
             )
             for mr in self.api(endpoint, paginate=True):
                 iid = int(mr["iid"])
                 draft = bool(mr.get("draft", mr.get("work_in_progress", False)))
                 by_iid[iid] = MRCandidate(
-                    project=project, iid=iid, title=mr.get("title", ""), draft=draft
+                    project=project,
+                    iid=iid,
+                    title=mr.get("title", ""),
+                    draft=draft,
+                    state=mr.get("state", "opened"),
                 )
         candidates = sorted(by_iid.values(), key=lambda c: c.iid)
         if not review_drafts:
@@ -219,6 +234,7 @@ class GitLabClient:
                 author=(data.get("author") or {})["username"],
                 web_url=data["web_url"],
                 draft=bool(data.get("draft", data.get("work_in_progress", False))),
+                state=data.get("state") or "opened",
             )
         except (KeyError, TypeError) as exc:
             raise GitLabError(
