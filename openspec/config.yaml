@@ -27,10 +27,13 @@ context: |
      По ходу добавлен --include-closed и исправлено определение терминала
      на Windows (< NUL). Go-решение и что учесть в Change 3 — в
      validation-notes.md этого архива.
-  3. scheduling-and-multi-repo-config — применён и проверен на Windows и
-     боевом GitLab (задача Task Scheduler, рабочая папка с очисткой, лог
-     прохода, claim в GitLab, настройки проекта); готов к архивации.
-     Итог и бэклог — validation-notes.md этого change.
+  3. scheduling-and-multi-repo-config — применён и заархивирован
+     (openspec/changes/archive/2026-10-02-scheduling-and-multi-repo-config).
+     Проверен на Windows и боевом GitLab (задача Task Scheduler, рабочая
+     папка с очисткой, лог прохода, claim в GitLab, настройки проекта).
+     Итог и бэклог — validation-notes.md этого архива.
+
+  Дорожная карта п.1–3 выполнена; следующие change — из бэклога AGENTS.md п.7.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 

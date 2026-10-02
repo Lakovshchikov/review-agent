@@ -212,8 +212,8 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    дескриптор. Публикация пока от уже авторизованной учётки `glab`; креды
    в конфиге и автоавторизация — бэклог. Детали и что учесть в Change 3 —
    `validation-notes.md` в архиве change'а
-3. **`scheduling-and-multi-repo-config`** — ✅ ПРИМЕНЁН И ПРОВЕРЕН,
-   готов к архивации (`openspec/changes/scheduling-and-multi-repo-config`).
+3. **`scheduling-and-multi-repo-config`** — ✅ ЗАВЕРШЁН И ЗААРХИВИРОВАН
+   (`openspec/changes/archive/2026-10-02-scheduling-and-multi-repo-config`).
    Задача Task Scheduler через `scripts/register-task.ps1` (`poll --all`
    каждые N минут + при входе, без окна через `pythonw`, `-ShowConsole`),
    рабочая папка `storage.work_dir` (временное удаляется сразу, логи и
@@ -224,7 +224,10 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    проход их пропускает. BREAKING: убран `--scratch-dir`. Детали и
    бэклог — `validation-notes.md` change'а
 
-**Бэклог (отдельные будущие change, не раньше чем после п.3):**
+**Бэклог (отдельные будущие change, п.1–3 завершены — можно пропозить):**
+- прекращать проход после фатальной ошибки провайдера (лимит/авторизация),
+  не пробуя остальные MR (иначе claim создаётся и удаляется на каждом MR)
+- рост профиля OpenCode (`opencode.db`, ~1,3 МБ на ревью) — не чистится
 - авто-resolve AI-тредов при фиксе кода разработчиком
 - self-generating best-practices ruleset из истории ревью+фидбека
 - ревью на новый diff после правок (повторный прогон той же MR)
