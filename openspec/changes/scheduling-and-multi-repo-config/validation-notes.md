@@ -198,3 +198,25 @@ OpenCode лежит не в `auth.json` и не в `OPENAI_API_KEY` (видим�
 чтобы поднялся VPN). Пробная регистрация (выключенная задача, сразу
 удалена) без прав администратора: `MSFT_TaskLogonTrigger user=IVANPC\lakov
 delay=PT5M` + `MSFT_TaskTimeTrigger rep=PT30M` — регистрируется.
+
+## 7.7. Боевая задача — первый проход (2026-10-02, 16:58) — код 1, причина вне review-agent
+
+`register-task.ps1 -IntervalMinutes 30` (без `-DryRun`, `config.yaml`):
+`pythonw.exe -m review_agent poll --all --config "config.yaml"`, без окна,
+`Interactive`, триггеры `PT30M` + «при входе, PT5M». Первый проход по
+триггеру в 16:58:39, `LastTaskResult = 1`, 77,2 с:
+
+- кандидаты `!587` и `!595` (`!603` не найден — пользователь снял себя с
+  ревьюеров, note «removed review request» — корректно);
+- оба `[failed] HarnessError: Harness exited with code 1`; в stderr
+  харнесса (сохранён в `logs\<время>-b2c-front-shopping-<iid>.harness-stderr.log`)
+  модель успела прочитать diff и файлы, затем `Error: ChatGPT usage limit
+  reached` — исчерпан лимит подписки провайдера;
+- модель `openai/gpt-5.5-fast#low` — из `config.yaml`, изменённого
+  пользователем в 16:25 (в логе OpenCode `--model openai/gpt-5.5-fast#low`);
+- claim'ы при сбое удалены: на `!587`/`!595` ни одного note бота за день.
+
+Наблюдение: при исчерпанном лимите каждый проход (раз в 30 мин) на каждом
+MR создаёт и удаляет claim-комментарий и падает. Кандидат в бэклог:
+распознавать фатальную ошибку провайдера (лимит/авторизация) и прекращать
+проход после первой такой ошибки, не трогая остальные MR.
