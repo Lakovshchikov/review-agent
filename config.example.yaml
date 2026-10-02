@@ -104,6 +104,22 @@ safety:
     - "powershell *"
     - "cmd *"
 
+# Рабочая папка: ВСЁ, что review-agent пишет на диск (worktree, промпты,
+# отчёты, тела запросов, lock, логи, dry-run, debug), лежит только здесь —
+# кроме итогового отчёта ручного режима (report.output_path). Раскладка:
+#   tmp/      временное — удаляется сразу после каждого MR; после прохода пусто
+#   logs/     лог каждого прохода + stderr харнесса упавших ревью
+#   dry-run/  несостоявшиеся комментарии `poll --dry-run`
+#   debug/    все артефакты прогонов с флагом --debug
+#   poll.lock один прогон за раз на эту папку
+# Относительный путь считается от текущей папки процесса (у задачи Task
+# Scheduler это папка проекта — её задаёт scripts/register-task.ps1).
+storage:
+  work_dir: ./.review-agent
+  # logs/, dry-run/ и debug/ старше этого числа дней удаляются в начале
+  # каждого прохода `poll`. null — не удалять по возрасту.
+  retention_days: 7
+
 # Опрос GitLab — нужна только для `review-agent poll` (ручной режим
 # `review-agent --repo ... --base ... --head ...` эту секцию игнорирует).
 # Кредов здесь НЕТ намеренно: `glab` должен быть заранее авторизован на
@@ -112,7 +128,8 @@ safety:
 gitlab:
   hostname: gitlab.example.local
   # username'ы GitLab: MR берётся в работу, если ХОТЯ БЫ ОДИН из них
-  # назначен ревьюером (не автором и не assignee).
+  # назначен ревьюером (не автором и не assignee). Можно не указывать,
+  # если у каждого включённого проекта есть свой `reviewers`.
   reviewers:
     - ai-reviewer
   # Draft-MR по умолчанию пропускаются.
@@ -120,7 +137,29 @@ gitlab:
   # Отчёт короче этого числа символов (или пустой) НЕ публикуется — защита
   # от "тихо пустого" отчёта (см. validation-notes.md Change 1).
   min_report_chars: 200
+  # Пока MR ревьюится, на нём висит claim-комментарий бота «ревью
+  # выполняется». Claim старше этого числа минут считается брошенным (проход
+  # умер) и снимается следующим проходом. Должен быть НЕ меньше лимита
+  # времени задачи Task Scheduler (-ExecutionTimeLimitHours, по умолчанию 4 ч).
+  claim_ttl_minutes: 240
   projects:
     - path: b2c/front-shopping           # путь проекта в GitLab
       local_repo: C:/repos/front-shopping  # локальный клон; review-agent только делает в нём fetch
       remote: origin                     # remote клона, указывающий на этот проект (по умолчанию origin)
+    # Необязательные переопределения проекта: enabled, reviewers,
+    # review_drafts, provider, skills. Не указано — берётся глобальное
+    # значение; указано — ЗАМЕНЯЕТ глобальное целиком (provider — весь
+    # блок, со своим reasoning_effort; skills: [] — явно без skill'ов).
+    - path: b2c/front-checkout
+      local_repo: C:/repos/front-checkout
+      reviewers: [ai-reviewer, checkout-lead]
+      provider:
+        name: openai
+        model: gpt-5
+        reasoning_effort: high
+      skills: []
+    # Выключенный проект не опрашивается и не считается сбоем (его клон
+    # может и не существовать).
+    - path: b2c/legacy-admin
+      local_repo: C:/repos/legacy-admin
+      enabled: false
