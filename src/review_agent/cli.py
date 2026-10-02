@@ -3,10 +3,13 @@
 - `review-agent --repo ... --base ... --head ...` - manual review: one
   full review (checkout, harness invocation, report, cleanup) and exit,
   with no GitLab calls at all.
-- `review-agent poll [--all] [--dry-run]` - one polling pass against
-  GitLab (see polling.py). The only command that talks to GitLab.
+- `review-agent poll [--all] [--dry-run] [--debug]` - one polling pass
+  against GitLab (see polling.py). The only command that talks to GitLab.
 
-Neither starts a scheduler or daemon (see AGENTS.md section 5).
+Neither starts a scheduler or daemon (see AGENTS.md section 5). Both
+write only under `storage.work_dir` from the config (housekeeping.py),
+except the manual report, and both hold `<work_dir>/poll.lock` while
+running.
 """
 
 from __future__ import annotations
@@ -14,6 +17,18 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+
+
+def _add_debug_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "Keep all files of each review run (prompt, safety note, report, "
+            "harness stderr, publication bodies) in <work_dir>/debug/ instead of "
+            "deleting them; they expire after storage.retention_days."
+        ),
+    )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -55,11 +70,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="config.yaml",
         help="Path to the review-agent YAML config (default: config.yaml).",
     )
-    parser.add_argument(
-        "--scratch-dir",
-        default=".review-agent-scratch",
-        help="Directory for isolated worktrees and per-run scratch files.",
-    )
+    _add_debug_flag(parser)
     return parser
 
 
@@ -97,11 +108,7 @@ def build_poll_arg_parser() -> argparse.ArgumentParser:
         default="config.yaml",
         help="Path to the review-agent YAML config with a 'gitlab' section (default: config.yaml).",
     )
-    parser.add_argument(
-        "--scratch-dir",
-        default=".review-agent-scratch",
-        help="Directory for isolated worktrees, per-run scratch files, and the pass lock.",
-    )
+    _add_debug_flag(parser)
     return parser
 
 
@@ -112,10 +119,10 @@ def poll_main(argv: list[str]) -> int:
 
     return run_poll(
         config_path=Path(args.config),
-        scratch_dir=Path(args.scratch_dir),
         review_all=args.review_all,
         dry_run=args.dry_run,
         include_closed=args.include_closed,
+        debug=args.debug,
     )
 
 
@@ -130,20 +137,43 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    # Deferred import: keeps `--help` fast and avoids importing the full
+    # Deferred imports: keep `--help` fast and avoid importing the full
     # pipeline (and its dependencies) just to print usage.
-    from review_agent.pipeline import run_review
+    from review_agent import pipeline
+    from review_agent.config import ConfigError, load_config
+    from review_agent.housekeeping import WorkDir, stamp
+    from review_agent.lock import PollLockBusy, poll_lock
+    from review_agent.report import write_report
 
-    report_path = run_review(
-        repo_path=Path(args.repo),
-        base_sha=args.base,
-        head_sha=args.head,
-        mr_title=args.mr_title,
-        mr_description=args.mr_description,
-        config_path=Path(args.config),
-        scratch_dir=Path(args.scratch_dir),
+    try:
+        config = load_config(Path(args.config))
+    except ConfigError as exc:
+        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
+        return 2
+    work_dir = WorkDir.from_config(config)
+    debug_dir = work_dir.debug / f"{stamp()}-manual-{args.head[:12]}" if args.debug else None
+
+    try:
+        with poll_lock(work_dir.root):
+            result = pipeline.run_review(
+                repo_path=Path(args.repo),
+                base_sha=args.base,
+                head_sha=args.head,
+                mr_title=args.mr_title,
+                mr_description=args.mr_description,
+                config=config,
+                debug_dir=debug_dir,
+            )
+    except PollLockBusy as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    report_path = write_report(
+        result.report, Path(config.report.output_path.format(run_id=result.run_id))
     )
     print(f"Review report written to: {report_path}")
+    if debug_dir is not None:
+        print(f"Debug artifacts kept in: {debug_dir}")
     return 0
 
 

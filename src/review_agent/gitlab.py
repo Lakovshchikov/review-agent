@@ -38,6 +38,10 @@ class GitLabError(RuntimeError):
     """A `glab` call failed, or returned something that cannot be used."""
 
 
+class NoteNotFound(GitLabError):
+    """The note to edit or delete no longer exists (HTTP 404)."""
+
+
 @dataclasses.dataclass(frozen=True)
 class MRCandidate:
     project: str
@@ -257,21 +261,43 @@ class GitLabClient:
 
     # -- writes --------------------------------------------------------
 
-    def post_note(self, project: str, iid: int, body: str, *, body_file: Path) -> None:
-        """Publish `body` as a note. The body travels in a file, never in argv."""
+    def _write_body(self, body: str, body_file: Path) -> None:
         body_file.parent.mkdir(parents=True, exist_ok=True)
         body_file.write_text(json.dumps({"body": body}, ensure_ascii=False), encoding="utf-8")
-        self._run(
-            [
-                "api",
-                "--hostname",
-                self.hostname,
-                "--method",
-                "POST",
-                "-H",
-                "Content-Type: application/json",
-                "--input",
-                str(body_file),
-                f"projects/{encode_project(project)}/merge_requests/{iid}/notes",
-            ]
-        )
+
+    def _notes_endpoint(self, project: str, iid: int) -> str:
+        return f"projects/{encode_project(project)}/merge_requests/{iid}/notes"
+
+    def _write(self, method: str, endpoint: str, body_file: Path | None = None) -> str:
+        args = ["api", "--hostname", self.hostname, "--method", method]
+        if body_file is not None:
+            args += ["-H", "Content-Type: application/json", "--input", str(body_file)]
+        args.append(endpoint)
+        try:
+            return self._run(args)
+        except GitLabError as exc:
+            if "404" in str(exc):
+                raise NoteNotFound(str(exc)) from exc
+            raise
+
+    def post_note(self, project: str, iid: int, body: str, *, body_file: Path) -> int:
+        """Publish `body` as a note and return its id. The body travels in a file, never in argv."""
+        self._write_body(body, body_file)
+        output = self._write("POST", self._notes_endpoint(project, iid), body_file)
+        try:
+            return int(_parse_json_stream(output)["id"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GitLabError(
+                f"glab api POST notes for {project}!{iid} did not return a note id: {output[:200]!r}"
+            ) from exc
+
+    def update_note(
+        self, project: str, iid: int, note_id: int, body: str, *, body_file: Path
+    ) -> None:
+        """Replace a note's text (the claim becomes the report). 404 -> NoteNotFound."""
+        self._write_body(body, body_file)
+        self._write("PUT", f"{self._notes_endpoint(project, iid)}/{note_id}", body_file)
+
+    def delete_note(self, project: str, iid: int, note_id: int) -> None:
+        """Delete a note (our own claim). 404 -> NoteNotFound."""
+        self._write("DELETE", f"{self._notes_endpoint(project, iid)}/{note_id}")

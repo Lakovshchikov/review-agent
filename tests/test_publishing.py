@@ -59,3 +59,69 @@ def test_comment_contains_reviewed_sha_marker_and_report_unchanged():
     assert find_marker_shas(body) == [HEAD]
     assert HEAD[:12] in body and BASE[:12] in body
     assert "openai/gpt#medium" in body
+
+
+# -- claims (design.md decision 7) -------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+from review_agent.publishing import (
+    build_claim_marker,
+    find_claims,
+    format_claim_comment,
+    live_claims,
+    stale_claims,
+)
+
+_NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+_TTL = timedelta(minutes=240)
+
+
+def _claim_note(note_id, age, *, author="bot", created_at=True):
+    started = _NOW - age
+    note = {"id": note_id, "author": {"username": author}, "body": format_claim_comment(head_sha="a" * 40, started_at=started)}
+    if created_at:
+        note["created_at"] = started.strftime("%Y-%m-%dT%H:%M:%S.123Z")
+    return note
+
+
+def test_claim_comment_has_hidden_marker_and_text():
+    body = format_claim_comment(head_sha="a" * 40, started_at=_NOW)
+    assert build_claim_marker("a" * 40, _NOW) in body
+    assert "<!-- ai-review-claim: sha=" + "a" * 40 + " started=2026-10-02T12:00:00Z -->" in body
+    assert "выполняется" in body and "aaaaaaaaaaaa" in body
+
+
+def test_claim_is_not_a_review_marker():
+    notes = [_claim_note(1, timedelta(minutes=1))]
+    assert not is_already_reviewed(notes, "bot")
+    assert find_marker_shas(notes[0]["body"]) == []
+
+
+def test_live_and_stale_claims_split_by_ttl():
+    notes = [
+        _claim_note(5, timedelta(minutes=10)),
+        _claim_note(3, timedelta(hours=5)),
+        _claim_note(4, timedelta(minutes=1)),
+    ]
+    assert [c.note_id for c in live_claims(notes, "bot", now=_NOW, ttl=_TTL)] == [4, 5]  # oldest id first
+    assert [c.note_id for c in stale_claims(notes, "bot", now=_NOW, ttl=_TTL)] == [3]
+
+
+def test_claims_of_other_authors_are_ignored():
+    notes = [_claim_note(1, timedelta(minutes=1), author="ivanov")]
+    assert find_claims(notes, "bot") == []
+
+
+def test_claim_time_falls_back_to_marker_then_counts_as_stale():
+    without_created_at = _claim_note(1, timedelta(minutes=1), created_at=False)
+    assert [c.note_id for c in live_claims([without_created_at], "bot", now=_NOW, ttl=_TTL)] == [1]
+
+    broken = {"id": 2, "author": {"username": "bot"}, "body": "<!-- ai-review-claim: sha=" + "a" * 40 + " started=garbage -->"}
+    assert live_claims([broken], "bot", now=_NOW, ttl=_TTL) == []
+    assert [c.note_id for c in stale_claims([broken], "bot", now=_NOW, ttl=_TTL)] == [2]
+
+
+def test_final_comment_carries_no_claim_marker():
+    body = format_comment(report="# Отчёт " + "x" * 300, head_sha="a" * 40, base_sha="b" * 40, model="m")
+    assert "ai-review-claim" not in body

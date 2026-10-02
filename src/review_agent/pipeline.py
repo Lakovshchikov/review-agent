@@ -1,25 +1,38 @@
-"""Wires the engine together: the single CLI entrypoint's implementation.
+"""Wires the engine together: one review of one commit range.
 
-Repository + base/head commits in, markdown report out. No GitLab calls,
-no scheduling - those are later changes (see AGENTS.md roadmap).
+Repository + base/head commits in, report text out. No GitLab calls,
+no scheduling, no file left behind: everything the run writes goes to
+`<work_dir>/tmp/<run_id>/` and that whole folder is deleted when the run
+ends, success or failure (see housekeeping.py for the layout). Callers
+get the report and the harness stderr back in memory and decide what to
+keep - the manual CLI writes the report to report.output_path, `poll`
+publishes it and keeps the stderr of failed reviews in logs/.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 from pathlib import Path
 from typing import Callable
 
-from review_agent.config import load_config
-from review_agent.harness import invoke_harness
+from review_agent.config import Config, load_config
+from review_agent.harness import HarnessError, invoke_harness
 from review_agent.harness_config import write_opencode_agent_config, write_safety_note
+from review_agent.housekeeping import WorkDir, copy_artifacts, remove_path
 from review_agent.prompt import (
     discover_docs_path,
     discover_repo_instructions_path,
     render_review_prompt,
 )
-from review_agent.report import write_report
 from review_agent.worktree import managed_worktree
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewResult:
+    report: str
+    harness_stderr: str
+    run_id: str
 
 
 def run_review(
@@ -29,68 +42,89 @@ def run_review(
     head_sha: str,
     mr_title: str,
     mr_description: str,
-    config_path: Path,
-    scratch_dir: Path,
+    config_path: Path | None = None,
+    config: Config | None = None,
     harness_runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-    report_path: Path | None = None,
-    stderr_log_path: Path | None = None,
-) -> Path:
-    """Run one full review and return the path to the written report.
+    debug_dir: Path | None = None,
+) -> ReviewResult:
+    """Run one full review and return the report and harness stderr.
 
-    `report_path` overrides the configured `report.output_path` template
-    (the polling command names reports after project/MR/SHA), and
-    `stderr_log_path` overrides where the harness stderr log goes (so the
-    polling summary can point at it); the manual CLI leaves both unset.
+    `config` overrides reading `config_path` - `poll` passes the
+    project's effective config (its own provider/skills). With
+    `debug_dir`, the run's files (prompt, safety note, report, harness
+    stderr - not the worktree) are copied there before deletion.
+    A failing harness raises HarnessError, which carries its stderr.
     """
-    config = load_config(config_path)
+    if config is None:
+        if config_path is None:
+            raise ValueError("run_review() needs either config or config_path")
+        config = load_config(config_path)
+    tmp_dir = WorkDir.from_config(config).tmp
 
-    with managed_worktree(repo_path, base_sha, head_sha, scratch_dir) as handle:
-        run_scratch_path = handle.path.parent
+    run_dir: Path | None = None
+    try:
+        with managed_worktree(repo_path, base_sha, head_sha, tmp_dir) as handle:
+            run_dir = handle.path.parent
 
-        repo_instructions_path = discover_repo_instructions_path(handle.path)
-        docs_path = discover_docs_path(handle.path)
-        skill_paths = [Path(p) for p in config.skills]
+            repo_instructions_path = discover_repo_instructions_path(handle.path)
+            docs_path = discover_docs_path(handle.path)
+            skill_paths = [Path(p) for p in config.skills]
 
-        prompt_text = render_review_prompt(
-            worktree_path=handle.path,
-            base_sha=base_sha,
-            mr_title=mr_title,
-            mr_description=mr_description,
-            repo_instructions_path=repo_instructions_path,
-            docs_path=docs_path,
-            skill_paths=skill_paths,
-        )
-        prompt_file = run_scratch_path / "prompt.md"
-        prompt_file.write_text(prompt_text, encoding="utf-8")
+            prompt_text = render_review_prompt(
+                worktree_path=handle.path,
+                base_sha=base_sha,
+                mr_title=mr_title,
+                mr_description=mr_description,
+                repo_instructions_path=repo_instructions_path,
+                docs_path=docs_path,
+                skill_paths=skill_paths,
+            )
+            prompt_file = run_dir / "prompt.md"
+            prompt_file.write_text(prompt_text, encoding="utf-8")
 
-        # Documentation only (logged to scratch); the actual enforcement is
-        # opencode.json below. See harness_config.py.
-        write_safety_note(handle.path, run_scratch_path, config.safety)
+            # Documentation only; the actual enforcement is opencode.json
+            # below. See harness_config.py.
+            write_safety_note(handle.path, run_dir, config.safety)
 
-        # Written into the worktree root (not scratch) because that's
-        # where OpenCode auto-discovers project config from - safe here
-        # because the whole worktree is removed with the rest of the run
-        # (see worktree.py) and the filename never shadows the target
-        # repo's own AGENTS.md/CLAUDE.md.
-        write_opencode_agent_config(handle.path, config.safety, agent_name=config.harness.agent_name)
+            # Written into the worktree root (not the run folder) because
+            # that's where OpenCode auto-discovers project config from -
+            # safe because the worktree is removed with the rest of the run.
+            write_opencode_agent_config(
+                handle.path, config.safety, agent_name=config.harness.agent_name
+            )
 
-        result = invoke_harness(
-            config.harness,
-            config.provider,
-            prompt=prompt_text,
-            prompt_file=prompt_file,
-            worktree_path=handle.path,
-            runner=harness_runner,
-        )
-
-        # Harnesses like OpenCode print their tool-call trace (what it read,
-        # what it ran, permission denials) to stderr, not stdout. Persisting
-        # it is the only way to diagnose a run that completes successfully
-        # but produces a suspiciously thin report (e.g. the model stopped
-        # after one line without exploring).
-        stderr_log_path = stderr_log_path or run_scratch_path / "harness-stderr.log"
-        stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
-        stderr_log_path.write_text(result.stderr, encoding="utf-8")
-
-        output_path = report_path or Path(config.report.output_path.format(run_id=handle.run_id))
-        return write_report(result.stdout, output_path)
+            # Harnesses like OpenCode print their tool-call trace (what it
+            # read, what it ran, permission denials) to stderr. It is the
+            # only way to diagnose a run that "succeeds" with a thin
+            # report, so it is kept in the run folder (for --debug) and
+            # handed back to the caller (for failed-review logs).
+            stderr_file = run_dir / "harness-stderr.log"
+            try:
+                result = invoke_harness(
+                    config.harness,
+                    config.provider,
+                    prompt=prompt_text,
+                    prompt_file=prompt_file,
+                    worktree_path=handle.path,
+                    runner=harness_runner,
+                )
+            except HarnessError as exc:
+                stderr_file.write_text(exc.stderr, encoding="utf-8")
+                raise
+            stderr_file.write_text(result.stderr, encoding="utf-8")
+            (run_dir / "report.md").write_text(result.stdout, encoding="utf-8")
+            return ReviewResult(
+                report=result.stdout, harness_stderr=result.stderr, run_id=handle.run_id
+            )
+    finally:
+        # The worktree itself is already gone (managed_worktree); now the
+        # rest of the run folder goes too, after a copy for --debug.
+        if run_dir is not None:
+            try:
+                if debug_dir is not None:
+                    copy_artifacts(run_dir, debug_dir)
+                remove_path(run_dir)
+            except OSError:
+                # Never mask the run's own outcome; a folder that could
+                # not be deleted is a leftover the next pass removes.
+                pass

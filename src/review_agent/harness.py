@@ -44,7 +44,15 @@ from review_agent.config import HarnessConfig, ProviderConfig
 
 
 class HarnessError(RuntimeError):
-    """Raised when the harness process fails."""
+    """Raised when the harness process fails.
+
+    Carries the harness's stderr (its tool-call trace) separately, so the
+    caller can keep it as a log for a failed review.
+    """
+
+    def __init__(self, message: str, *, stderr: str = "") -> None:
+        super().__init__(message)
+        self.stderr = stderr
 
 
 @dataclasses.dataclass(frozen=True)
@@ -136,6 +144,7 @@ def invoke_harness(
     )
     if result.returncode != 0:
         raise HarnessError(
-            f"Harness exited with code {result.returncode}: {result.stderr.strip()}"
+            f"Harness exited with code {result.returncode}: {result.stderr.strip()}",
+            stderr=result.stderr,
         )
     return HarnessResult(stdout=result.stdout, stderr=result.stderr)

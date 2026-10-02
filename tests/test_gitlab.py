@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from review_agent.gitlab import GitLabClient, GitLabError, encode_project
+from review_agent.gitlab import GitLabClient, GitLabError, NoteNotFound, encode_project
 
 
 class StubGlab:
@@ -122,11 +122,11 @@ def test_include_closed_queries_all_states_and_keeps_state():
 
 
 def test_post_note_sends_body_from_file_not_argv(tmp_path):
-    stub = StubGlab([("--method POST", 0, "{}", "")])
+    stub = StubGlab([("--method POST", 0, json.dumps({"id": 4242, "body": "..."}), "")])
     report = "## Находки\n\n" + "очень длинный отчёт\n" * 2000
     body_file = tmp_path / "note.json"
 
-    _client(stub).post_note("a/b", 3, report, body_file=body_file)
+    assert _client(stub).post_note("a/b", 3, report, body_file=body_file) == 4242
 
     argv = stub.calls[0]["argv"]
     assert report not in " ".join(argv)
@@ -150,3 +150,51 @@ def test_preflight_auth_failure_names_cause():
 def test_preflight_success_returns_username():
     stub = StubGlab([("api", 0, json.dumps({"username": "ai-reviewer"}), "")])
     assert _client(stub).preflight() == "ai-reviewer"
+
+
+def test_post_note_without_id_in_response_is_an_error(tmp_path):
+    stub = StubGlab([("--method POST", 0, "{}", "")])
+    with pytest.raises(GitLabError, match="note id"):
+        _client(stub).post_note("a/b", 3, "x", body_file=tmp_path / "n.json")
+
+
+def test_update_note_puts_body_from_file(tmp_path):
+    stub = StubGlab([("--method PUT", 0, "{}", "")])
+    body_file = tmp_path / "upd.json"
+    report = "## Отчёт\n" * 500
+
+    _client(stub).update_note("a/b", 3, 77, report, body_file=body_file)
+
+    argv = stub.calls[0]["argv"]
+    assert report not in " ".join(argv)
+    assert argv[argv.index("--method") + 1] == "PUT"
+    assert argv[argv.index("--input") + 1] == str(body_file)
+    assert argv[-1] == "projects/a%2Fb/merge_requests/3/notes/77"
+    assert json.loads(body_file.read_text(encoding="utf-8")) == {"body": report}
+
+
+def test_delete_note(tmp_path):
+    stub = StubGlab([("--method DELETE", 0, "", "")])
+    _client(stub).delete_note("a/b", 3, 77)
+    argv = stub.calls[0]["argv"]
+    assert argv[argv.index("--method") + 1] == "DELETE"
+    assert "--input" not in argv
+    assert argv[-1] == "projects/a%2Fb/merge_requests/3/notes/77"
+
+
+@pytest.mark.parametrize("call", ["update", "delete"])
+def test_missing_note_raises_note_not_found(tmp_path, call):
+    stub = StubGlab([("--method", 1, "", "HTTP 404: 404 Not found")])
+    client = _client(stub)
+    with pytest.raises(NoteNotFound):
+        if call == "update":
+            client.update_note("a/b", 3, 77, "x", body_file=tmp_path / "u.json")
+        else:
+            client.delete_note("a/b", 3, 77)
+
+
+def test_other_write_errors_stay_generic(tmp_path):
+    stub = StubGlab([("--method", 1, "", "HTTP 403: Forbidden")])
+    with pytest.raises(GitLabError) as info:
+        _client(stub).delete_note("a/b", 3, 77)
+    assert not isinstance(info.value, NoteNotFound)
