@@ -108,3 +108,33 @@ config.change3-a.local.yaml` (без `--all`, чтобы ревьюить по �
 элемента удалены, свежие артефакты 7.2 (2 debug-папки, 2 `.comment.md`,
 логи) на месте, `old-unrelated.txt` не тронут. Уборка прошла до выбора
 MR — без единого ревью.
+
+## 7.3. Claim в GitLab (2026-10-02, `!502`, merged) — OK
+
+**Claim → отчёт, параллельный проход из другой рабочей папки.**
+`review-agent poll --include-closed` (`.review-agent`), выбран `!502`:
+пока шло ревью, в MR был виден комментарий «⏳ … выполняется»; через
+16:11:28 — `[published]`, на месте claim'а отчёт (один комментарий
+бота). Во время ревью второй проход `--config config.change3-b.local.yaml`
+(`.review-agent-b`): `!502` не попал в список, в итоге
+`[skipped] … ревью уже выполняется другим проходом (claim от
+2026-10-02 13:08 UTC)`.
+
+**Проход убит посреди ревью.** Комментарий с отчётом удалён вручную,
+`--config config.change3-c.local.yaml` (`.review-agent-c`,
+`claim_ttl_minutes: 1`), снова `!502`. После появления claim'а процессы
+(`review-agent`, python, opencode) убиты `Stop-Process -Force` по
+командной строке. Осталось: `tmp\1790947307-bfec03c4\` (с worktree),
+`tmp\mr-20261002-162143-b2c-front-shopping-502\`, `poll.lock`, worktree
+`.review-agent-c/tmp/.../worktree` в `git worktree list` клона, claim в MR.
+Повторный проход через ~1 мин: lock убитого PID перехвачен молча, «Удалены
+остатки прерванных прогонов: 2», «Снят протухший claim #336999»,
+`[published]` за 194,3 с. Итог по API: на `!502` один note бота с
+маркером — `337000`, `created_at` 13:23:40 (claim), `updated_at`
+13:25:58 (отчёт), без claim-маркера. `tmp\` всех трёх рабочих папок пуст,
+lock'ов нет, в `git worktree list` только собственные worktree
+пользователя.
+
+Попутно: опечатка в имени конфига (`...local.yam`) → «Ошибка
+конфигурации», лог записан в рабочую папку по умолчанию
+`.review-agent\logs\` — как в спеке.
