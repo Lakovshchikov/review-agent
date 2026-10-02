@@ -19,8 +19,15 @@ context: |
      сделано: количественное сравнение находок с эталонным списком A-M
      из исходного исследования (исходный документ недоступен) — см.
      тот же validation-notes.md.
-  2. gitlab-polling-and-publishing — следующий change, можно пропозить
-  3. scheduling-and-multi-repo-config — не начат
+  2. gitlab-polling-and-publishing — применён и заархивирован
+     (openspec/changes/archive/2026-10-02-gitlab-polling-and-publishing).
+     `review-agent poll` проверен на боевом GitLab (git.platops.ru,
+     b2c/front-shopping): публикация комментария с маркером на !544,
+     пропуск уже отревьюенного MR, --all, --dry-run, lock одного прохода.
+     По ходу добавлен --include-closed и исправлено определение терминала
+     на Windows (< NUL). Go-решение и что учесть в Change 3 — в
+     validation-notes.md этого архива.
+  3. scheduling-and-multi-repo-config — следующий change, можно пропозить
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 
