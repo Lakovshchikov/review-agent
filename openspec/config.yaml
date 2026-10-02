@@ -27,7 +27,10 @@ context: |
      По ходу добавлен --include-closed и исправлено определение терминала
      на Windows (< NUL). Go-решение и что учесть в Change 3 — в
      validation-notes.md этого архива.
-  3. scheduling-and-multi-repo-config — следующий change, можно пропозить
+  3. scheduling-and-multi-repo-config — применён и проверен на Windows и
+     боевом GitLab (задача Task Scheduler, рабочая папка с очисткой, лог
+     прохода, claim в GitLab, настройки проекта); готов к архивации.
+     Итог и бэклог — validation-notes.md этого change.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 

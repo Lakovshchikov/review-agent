@@ -212,9 +212,17 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    дескриптор. Публикация пока от уже авторизованной учётки `glab`; креды
    в конфиге и автоавторизация — бэклог. Детали и что учесть в Change 3 —
    `validation-notes.md` в архиве change'а
-3. **`scheduling-and-multi-repo-config`** — следующий change, можно
-   пропозить. Task Scheduler (только с `poll --all`), конфиг на несколько
-   репозиториев, логирование, очистка scratch-папок прогонов
+3. **`scheduling-and-multi-repo-config`** — ✅ ПРИМЕНЁН И ПРОВЕРЕН,
+   готов к архивации (`openspec/changes/scheduling-and-multi-repo-config`).
+   Задача Task Scheduler через `scripts/register-task.ps1` (`poll --all`
+   каждые N минут + при входе, без окна через `pythonw`, `-ShowConsole`),
+   рабочая папка `storage.work_dir` (временное удаляется сразу, логи и
+   dry-run/debug — по сроку), лог каждого прохода, claim-комментарий в
+   GitLab против двойного ревью, переопределения проекта (`enabled`,
+   `reviewers`, `review_drafts`, `provider`, `skills`). Проверен на боевом
+   GitLab: опубликованы отчёты в `!587`/`!595` по расписанию, повторный
+   проход их пропускает. BREAKING: убран `--scratch-dir`. Детали и
+   бэклог — `validation-notes.md` change'а
 
 **Бэклог (отдельные будущие change, не раньше чем после п.3):**
 - авто-resolve AI-тредов при фиксе кода разработчиком
