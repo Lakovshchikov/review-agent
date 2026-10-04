@@ -251,8 +251,8 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    баг: `opencode run` висел вне консоли из-за унаследованного stdin.
    Детали — `validation-notes.md` change'а
 
-6. **`gitlab-file-links`** — ✅ РЕАЛИЗОВАН И ПРОВЕРЕН, ждёт архивации
-   (`openspec/changes/gitlab-file-links`). Ссылки на файлы в опубликованном
+6. **`gitlab-file-links`** — ✅ ЗАВЕРШЁН И ЗААРХИВИРОВАН
+   (`openspec/changes/archive/2026-10-04-gitlab-file-links`). Ссылки на файлы в опубликованном
    отчёте (и в dry-run) ведут на GitLab: `<проект>/-/blob/<head_sha>/<путь>#L<n>`
    (закреплены на отревьюенном коммите, не на ветке; файл, удалённый в MR, —
    на base). Распознаются markdown-ссылки на временный worktree и пути в

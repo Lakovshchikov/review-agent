@@ -45,8 +45,8 @@ context: |
      Журнал расхода usage/ledger.jsonl, замер остатка квоты в интерактиве,
      `review-agent usage`.
 
-  6. gitlab-file-links — применён и проверен, ждёт архивации
-     (openspec/changes/gitlab-file-links). Ссылки на файлы в отчёте ведут на
+  6. gitlab-file-links — применён и заархивирован
+     (openspec/changes/archive/2026-10-04-gitlab-file-links). Ссылки на файлы в отчёте ведут на
      GitLab в отревьюенном коммите (blob/<head_sha>/path#L..); проверен на
      реальных отчётах и живым poll --dry-run (!11) — validation-notes.md.
 
