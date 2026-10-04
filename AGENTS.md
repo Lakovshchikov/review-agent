@@ -244,6 +244,13 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
 - self-generating best-practices ruleset из истории ревью+фидбека
 - ревью на новый diff после правок (повторный прогон той же MR)
 - backend/другие стеки помимо frontend
+- автоматический замер % лимитов подписки по каждому ревью (после
+  `review-usage-accounting`, где % — оценка из токенов + ручные отметки):
+  прямой `wham/usage` с OAuth-токеном OpenCode v2 не работает (401: свой
+  OAuth-клиент, account id в JWT зашифрован; маскироваться под Codex не
+  будем). Кандидаты: заголовки `x-codex-*-used-percent` в debug-логе
+  OpenCode (проверить при живой проверке change) или Codex CLI как харнесс
+  (`codex exec --json` отдаёт rate limits по прогону)
 
 ## 8. Процесс работы над самим проектом
 
