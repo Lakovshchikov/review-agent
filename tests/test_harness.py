@@ -134,3 +134,27 @@ def test_provider_swap_is_configuration_only():
 
     models_used = [call["argv"][3] for call in stub.calls]
     assert models_used == ["anthropic/claude-sonnet-4-5#medium", "ollama/qwen2.5-coder:32b#high"]
+
+
+def test_invoke_harness_survives_non_utf8_output(tmp_path):
+    """Regression: a byte that is not valid UTF-8 (0x87 - cp866 Cyrillic,
+    seen live in opencode output on Windows) must not kill the reader
+    thread; the run completes and the rest of the output is intact."""
+    import sys
+
+    # ASCII-only script (raw strings): non-ASCII argv itself gets mangled
+    # on Windows. b"\xd0\xbe\xd0\xba" is UTF-8 "ок".
+    script = (
+        r"import sys;"
+        r"sys.stdout.buffer.write(b'\xd0\xbe\xd0\xba \x87 end');"
+        r"sys.stderr.buffer.write(b'err \x87')"
+    )
+    result = invoke_harness(
+        HarnessConfig(command=[sys.executable, "-c", script]),
+        ProviderConfig(name="p", model="m", reasoning_effort=None),
+        prompt="review",
+        prompt_file=tmp_path / "prompt.md",
+        worktree_path=tmp_path,
+    )
+    assert result.stdout == "ок \ufffd end"
+    assert result.stderr == "err \ufffd"

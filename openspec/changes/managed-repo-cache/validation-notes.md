@@ -41,4 +41,4 @@
 
 ### Найдено попутно (не относится к этому change)
 
-На `!506` харнесс упал в потоке чтения вывода: `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x87` — в выводе opencode оказались байты не в UTF-8 (0x87 — «З» в cp866, вероятно русское сообщение Windows/консольной утилиты). `harness.invoke_harness` декодирует строго (`encoding="utf-8"` без `errors`), поток чтения погибает, прогон висит/падает. Исправление — `errors="replace"`; отдельной правкой.
+На `!506` харнесс упал в потоке чтения вывода: `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x87` — в выводе opencode оказались байты не в UTF-8 (0x87 — «З» в cp866, вероятно русское сообщение Windows/консольной утилиты). `harness.invoke_harness` декодирует строго (`encoding="utf-8"` без `errors`), поток чтения погибает, прогон висит/падает. Исправлено отдельным коммитом: `errors="replace"` в `invoke_harness` + регрессионный тест `test_invoke_harness_survives_non_utf8_output` (без правки воспроизводит ту же `UnicodeDecodeError`).
