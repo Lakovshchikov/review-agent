@@ -71,3 +71,57 @@ def test_count_findings_blocker_and_bold_variants():
 def test_count_findings_empty_and_absent_report():
     assert count_findings("") == {"blocker": 0, "major": 0, "minor": 0}
     assert count_findings(None) is None
+
+
+GROUPED_REPORT = """\
+## Результаты ревью
+
+### Major
+
+1. **Потеря глобальных стилей**
+   Из файла удалены:
+   - глобальный `font-family`;
+   - стили `#root`.
+
+   SEV: Major — повтор метки внутри находки не считается.
+
+2. **Нарушена конфигурация сеток**
+
+   ```ts
+   // Minor: строка кода, не находка
+   ```
+
+### Minor
+
+3. **Виджеты игнорируют данные**
+4. **Ссылка не является ссылкой**
+
+## Итог
+Найдено 4 замечания: 2 Major, 2 Minor.
+"""
+
+
+def test_count_findings_severity_group_headings():
+    assert count_findings(GROUPED_REPORT) == {"blocker": 0, "major": 2, "minor": 2}
+
+
+def test_count_findings_one_finding_per_group_heading():
+    report = "### Major\n\n1. **A**\n\n### Minor\n\n2. **B**\n\n### Minor\n\n3. **C**\n"
+    assert count_findings(report) == {"blocker": 0, "major": 1, "minor": 2}
+
+
+def test_count_findings_group_with_sub_headings_and_bullets():
+    report = (
+        "## 🔴 Blocker\n\n### Утечка токена\ntext\n### Нет проверки прав\n\n"
+        "## SEV: Minor (2)\n\n- опечатка\n  - деталь\n- лишний ререндер\n"
+    )
+    assert count_findings(report) == {"blocker": 2, "major": 0, "minor": 2}
+
+
+def test_count_findings_group_item_with_its_own_label_uses_it():
+    report = "### Major\n\n1. **A**\n2. [Minor] B\n"
+    assert count_findings(report) == {"blocker": 0, "major": 1, "minor": 1}
+
+
+def test_count_findings_empty_group_counts_nothing():
+    assert count_findings("### Minor\n\nНет замечаний.\n") == {"blocker": 0, "major": 0, "minor": 0}

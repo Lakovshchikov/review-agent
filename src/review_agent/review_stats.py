@@ -78,18 +78,78 @@ def _label_in(line: str) -> str | None:
     return best[1] if best else None
 
 
+_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+# A heading that is ONLY a severity - a group of findings, not a finding:
+#   ### Major    ## 🔴 Blocker    ### SEV: Minor    ### Major (3)
+_SECTION_RE = re.compile(rf"^[\W_]*(?:SEV\s*[:=\-]?\s*)?{_SEV}[\W_]*(?:\(?\d+\)?)?[\W_]*$", re.IGNORECASE)
+# An item that may be a finding: a list item or a heading.
+_ITEM_RE = re.compile(r"^(?P<indent>\s*)(?P<marker>\d+[.)]|[-*+])\s+\S")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _item_style(line: str) -> tuple[str, int] | None:
+    """(kind, indent/level) of a list item or heading line, None for prose."""
+    heading = _HEADING_RE.match(line)
+    if heading:
+        return "heading", len(heading.group(1))
+    item = _ITEM_RE.match(line)
+    if item:
+        kind = "numbered" if item.group("marker")[0].isdigit() else "bullet"
+        return kind, len(item.group("indent").expandtabs(4))
+    return None
+
+
 def count_findings(report: str | None) -> dict[str, int] | None:
     """Findings per severity, estimated from the report's labels; None without a report.
 
-    One line counts as at most one finding (its first label). This is an
-    estimate of a free-form markdown report - the published report stays
-    the source of truth.
+    Two report shapes are understood:
+    - a label on the finding itself (`### Major — ...`, `SEV: Minor`,
+      `[Major]`): one line counts as at most one finding (its first label);
+    - a heading that is only a severity (`### Major`) followed by the
+      findings as list items or sub-headings: each item of the first
+      item's kind and depth counts as one finding of that severity, until
+      the next heading of the same or higher level. Labels inside such a
+      section count only on those item lines, so a repeated `SEV: Major`
+      under an item is not a second finding.
+
+    Fenced code blocks are skipped. This is an estimate of a free-form
+    markdown report - the published report stays the source of truth.
     """
     if report is None:
         return None
     counts = {severity: 0 for severity in SEVERITIES}
+    section: str | None = None  # severity of the current group heading
+    section_level = 0
+    style: tuple[str, int] | None = None  # how the group's findings are written
+    fence: str | None = None
     for line in report.splitlines():
+        opening = _FENCE_RE.match(line)
+        if fence is not None:
+            if opening and set(line.strip()) == {fence[0]} and len(line.strip()) >= len(fence):
+                fence = None
+            continue
+        if opening:
+            fence = opening.group(1)
+            continue
+
+        heading = _HEADING_RE.match(line)
+        if heading and (section is None or len(heading.group(1)) <= section_level):
+            group = _SECTION_RE.match(heading.group(2))
+            if group:
+                section, section_level, style = group.group(1).lower(), len(heading.group(1)), None
+                continue
+            section = None
+
         label = _label_in(line)
-        if label is not None:
-            counts[label] += 1
+        if section is None:
+            if label is not None:
+                counts[label] += 1
+            continue
+        current = _item_style(line)
+        if current is None:
+            continue
+        if style is None:
+            style = current
+        if current == style:
+            counts[label or section] += 1
     return counts
