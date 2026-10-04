@@ -99,6 +99,26 @@ def fetch_refspecs(repo_path: Path, remote: str, refspecs: list[str]) -> list[st
     return warnings
 
 
+def list_tree_paths(repo_path: Path, sha: str) -> set[str]:
+    """Every file and directory path of commit `sha`, repository-relative.
+
+    Read-only and local (works in a bare clone too). `-z` with quotepath
+    off and an explicit UTF-8 decode keep non-ASCII paths intact - plain
+    `text=True` decodes with the Windows ANSI codepage (Change 1's bug).
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "-c", "core.quotepath=off",
+         "ls-tree", "-r", "-t", "-z", "--name-only", sha],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=no_window_flags(),
+    )
+    if result.returncode != 0:
+        raise WorktreeError(f"git ls-tree {sha} failed: {result.stderr.strip()}")
+    return {path for path in result.stdout.split("\0") if path}
+
+
 def _new_run_id() -> str:
     return f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
 

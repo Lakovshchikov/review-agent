@@ -45,7 +45,12 @@ context: |
      Журнал расхода usage/ledger.jsonl, замер остатка квоты в интерактиве,
      `review-agent usage`.
 
-  Дорожная карта п.1–5 выполнена; следующие change — из бэклога AGENTS.md п.7.
+  6. gitlab-file-links — применён и заархивирован
+     (openspec/changes/archive/2026-10-04-gitlab-file-links). Ссылки на файлы в отчёте ведут на
+     GitLab в отревьюенном коммите (blob/<head_sha>/path#L..); проверен на
+     реальных отчётах и живым poll --dry-run (!11) — validation-notes.md.
+
+  Дорожная карта п.1–6 выполнена; следующие change — из бэклога AGENTS.md п.7.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 

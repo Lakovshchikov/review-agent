@@ -69,6 +69,8 @@ def test_run_review_end_to_end_with_stub_harness(git_repo_with_base_and_head, tm
     assert isinstance(result, ReviewResult)
     assert result.report == "# Review\n\nNo issues found."
     assert result.harness_stderr == "tool trace line"
+    # The report refers to files by this path; publishing rewrites it.
+    assert result.worktree_path == Path(captured["cwd"])
 
     # The harness was actually invoked, inside the isolated worktree in <work_dir>/tmp.
     assert captured["argv"][0] == "stub-harness"
