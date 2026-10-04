@@ -236,8 +236,8 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    на боевом GitLab (клон через glab, в т.ч. без консоли) — `validation-notes.md`
    change'а
 
-5. **`review-usage-accounting`** — ✅ ПРИМЕНЁН И ПРОВЕРЕН ВЖИВУЮ
-   (в т.ч. `poll --all`), готов к архиву. После каждого прогона —
+5. **`review-usage-accounting`** — ✅ ЗАВЕРШЁН И ЗААРХИВИРОВАН
+   (`openspec/changes/archive/2026-10-04-review-usage-accounting`). После каждого прогона —
    одна запись в `<work_dir>/usage/ledger.jsonl` (токены по видам вместе с
    субагентами, время, модель, MR, размер изменения, находки; без текста),
    источник — `opencode session export` по пути worktree. Интерактивный

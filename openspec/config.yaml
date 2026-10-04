@@ -38,9 +38,10 @@ context: |
      авторизацией через glab. Проверен на Windows и боевом GitLab (в т.ч.
      клон без консоли) — validation-notes.md этого архива.
 
-  5. review-usage-accounting — применён и проверен вживую
-     (openspec/changes/review-usage-accounting, validation-notes.md);
-     все задачи выполнены, готов к архиву.
+  5. review-usage-accounting — применён и заархивирован
+     (openspec/changes/archive/2026-10-04-review-usage-accounting).
+     Проверен вживую: интерактивный poll с замером квоты, poll --all,
+     дрейф формата, сводка с реальными ценами — validation-notes.md.
      Журнал расхода usage/ledger.jsonl, замер остатка квоты в интерактиве,
      `review-agent usage`.
 

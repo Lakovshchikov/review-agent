@@ -22,7 +22,7 @@ The system SHALL write every file it creates during a review or polling pass (wo
 - **THEN** the managed copy SHALL be located in the working directory's repository area and the review's checkout SHALL be located in the transient area, not inside the repository area
 
 ### Requirement: Transient run files are deleted after each review
-Unless debug mode is on, the system SHALL delete all transient files of a review run (worktree, prompt, safety note, report, publication request body, harness output) as soon as that merge request has been processed, whether the review succeeded, failed, or was skipped. Managed repository copies are not transient files of a run.
+Unless debug mode is on, the system SHALL delete all transient files of a review run (worktree, prompt, safety note, report, publication request body, harness output) as soon as that merge request has been processed, whether the review succeeded, failed, or was skipped. Managed repository copies and the usage accounting area are not transient files of a run.
 
 #### Scenario: Successful published review
 - **WHEN** a polling pass reviews and publishes an MR without debug mode
@@ -34,7 +34,7 @@ Unless debug mode is on, the system SHALL delete all transient files of a review
 
 #### Scenario: Manual review keeps only the report
 - **WHEN** the manual review command completes without debug mode
-- **THEN** the report SHALL exist at the configured report path and no other file of that run SHALL remain in the working directory
+- **THEN** the report SHALL exist at the configured report path and no other file of that run SHALL remain in the working directory, except the run's record appended to the usage ledger when usage accounting is enabled
 
 #### Scenario: Managed copy survives the review
 - **WHEN** a review against a managed copy finishes, successfully or not
@@ -128,3 +128,18 @@ A failure to delete any file SHALL be recorded in the pass log as a warning and 
 #### Scenario: File locked by another process
 - **WHEN** an expired log file cannot be deleted because another process has it open
 - **THEN** the pass SHALL log a warning naming the file and SHALL continue with discovery and reviews
+
+### Requirement: Usage accounting area is kept across passes
+The usage ledger and the saved copy of the price catalog SHALL be located in the working directory's usage area. They are neither transient run files nor retained artifacts: transient-file deletion, leftover cleanup, and age-based expiry SHALL NOT delete or truncate them.
+
+#### Scenario: Ledger survives cleanup
+- **WHEN** a polling pass starts and runs its cleanup with a retention period shorter than the age of the oldest ledger record
+- **THEN** the ledger and all its records SHALL remain unchanged
+
+#### Scenario: Saved price catalog survives cleanup
+- **WHEN** a polling pass runs its cleanup and the saved price catalog copy is older than the retention period
+- **THEN** the saved copy SHALL remain
+
+#### Scenario: Ledger location
+- **WHEN** usage accounting is enabled and a review runs
+- **THEN** the ledger SHALL be written under the configured working directory, in its usage area
