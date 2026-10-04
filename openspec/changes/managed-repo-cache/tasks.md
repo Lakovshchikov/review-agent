@@ -2,13 +2,13 @@
 
 ## 1. Живая проверка авторизации через glab (до кода)
 
-- [ ] 1.1 На целевой Windows-машине проверить `glab auth git-credential`:
+- [x] 1.1 На целевой Windows-машине проверить `glab auth git-credential`:
   - `glab --version` — записать версию;
   - `git -c credential.helper= -c "credential.helper=!'<abs path to glab>' auth git-credential" clone --bare --no-tags https://<host>/<path>.git <scratch>` с `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` — клон успешен, окно GCM не появилось;
   - в получившемся клоне нет токена: поиск значения `glab auth token`/`glab config get token` по файлам клона пуст.
 
   Проверка: результат и версия glab записаны в `validation-notes.md` этого change. Если хелпер не работает — **остановиться** и вернуться к обсуждению авторизации (design.md, риски), задачи ниже не начинать.
-- [ ] 1.2 Повторить `git fetch` в том же клоне с `--config`, записанным при клонировании (без `-c` в команде), — креды берутся из конфига клона. Проверка: результат записан в `validation-notes.md`.
+- [x] 1.2 Повторить `git fetch` в том же клоне с `--config`, записанным при клонировании (без `-c` в команде), — креды берутся из конфига клона. Проверка: результат записан в `validation-notes.md`.
 
 ## 2. Конфиг
 
