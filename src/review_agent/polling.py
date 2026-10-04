@@ -60,6 +60,8 @@ from review_agent.lock import LOCK_FILE_NAME, PollLockBusy, pid_alive, poll_lock
 from review_agent.passlog import PassLog, pass_log
 from review_agent.proc import no_window_flags
 from review_agent.pipeline import ReviewResult, run_review
+from review_agent.usage_ledger import QuotaPrompt, RunLabels, UsageRecorder, make_recorder
+from review_agent.quota_prompt import make_quota_prompt
 from review_agent.repo_source import RepoSources, expire_repos, managed_copies, slug
 from review_agent.publishing import (
     format_claim_comment,
@@ -158,6 +160,11 @@ class _PassContext:
     review_fn: Callable[..., ReviewResult]
     repo_sources: RepoSources
     now_fn: Callable[[], datetime]
+    # Usage accounting (usage_ledger.py); None when disabled.
+    usage: UsageRecorder | None = None
+    # Interactive single-MR pass only: builds the quota questions for a
+    # provider name (quota_prompt.py); None in --all mode.
+    quota_factory: Callable[[str], QuotaPrompt] | None = None
 
 
 # -- the pass ----------------------------------------------------------------
@@ -295,6 +302,14 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
 
         # 5. The review itself, with the project's own provider/skills.
         try:
+            usage_kwargs: dict[str, Any] = {}
+            if ctx.usage is not None:
+                provider = item.settings.config.provider.name
+                usage_kwargs = dict(
+                    usage=ctx.usage,
+                    labels=RunLabels(source="poll", project=project.path, mr_iid=meta.iid),
+                    quota_prompt=ctx.quota_factory(provider) if ctx.quota_factory else None,
+                )
             result = ctx.review_fn(
                 repo_path=prepared.path,
                 base_sha=refs.base_sha,
@@ -303,6 +318,7 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
                 mr_description=meta.description,
                 config=item.settings.config,
                 debug_dir=debug_dir,
+                **usage_kwargs,
             )
         except HarnessError as exc:
             _keep_harness_log(exc.stderr, name, outcome, ctx)
@@ -472,6 +488,17 @@ def run_poll(
                         review_fn=review_fn,
                         repo_sources=repo_sources_factory(config, work_dir, log),
                         now_fn=now_fn,
+                        usage=make_recorder(config, warn=log.warning, note=log.file_only),
+                        quota_factory=(
+                            None
+                            if review_all or not config.usage.enabled
+                            else lambda provider: make_quota_prompt(
+                                config.usage.quota_windows,
+                                provider,
+                                input_fn=input_fn,
+                                output_fn=output_fn,
+                            )
+                        ),
                     )
                     return _run_locked(
                         ctx_kwargs=ctx_kwargs,

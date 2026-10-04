@@ -128,6 +128,47 @@ class StorageConfig:
     repo_retention_days: int | None = DEFAULT_REPO_RETENTION_DAYS
 
 
+DEFAULT_PRICE_CATALOG = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
+    "model_prices_and_context_window.json"
+)
+# Per-token price fields of a LiteLLM catalog entry - the only ones the
+# usage summary reads (see usage_prices.py). Overrides use the same names
+# so an entry can be copied from the catalog as is.
+PRICE_FIELDS = (
+    "input_cost_per_token",
+    "output_cost_per_token",
+    "cache_read_input_token_cost",
+    "cache_creation_input_token_cost",
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class UsageConfig:
+    """Usage accounting: what each review run cost (see usage_ledger.py).
+
+    Collecting usage never affects a review; `enabled: false` turns off
+    both collection and the interactive quota questions.
+    """
+
+    enabled: bool = True
+    # Where token usage comes from: "opencode" (session export) or "none".
+    source: str = "opencode"
+    session_list_command: list[str] = dataclasses.field(
+        default_factory=lambda: ["opencode", "session", "list"]
+    )
+    session_export_command: list[str] = dataclasses.field(
+        default_factory=lambda: ["opencode", "session", "export", "{session_id}"]
+    )
+    # Subscription limit windows asked about in an interactive single-MR run.
+    quota_windows: list[str] = dataclasses.field(default_factory=lambda: ["5h", "week"])
+    # URL or local path of a LiteLLM-format price catalog, re-read by
+    # every `review-agent usage`; never used during reviews.
+    price_catalog: str = DEFAULT_PRICE_CATALOG
+    # "provider/model" -> catalog-format entry; replaces the catalog entry.
+    price_overrides: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+
+
 @dataclasses.dataclass(frozen=True)
 class GitLabProjectConfig:
     # GitLab project path, e.g. "b2c/front-shopping"
@@ -183,6 +224,7 @@ class Config:
     # Optional: absent for manual-only configs (Change 1), required by `poll`.
     gitlab: GitLabConfig | None = None
     storage: StorageConfig = dataclasses.field(default_factory=StorageConfig)
+    usage: UsageConfig = dataclasses.field(default_factory=UsageConfig)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -299,6 +341,7 @@ def load_config(path: str | Path) -> Config:
 
     gitlab = _load_gitlab(data["gitlab"]) if data.get("gitlab") is not None else None
     storage = _load_storage(data.get("storage"))
+    usage = _load_usage(data.get("usage"))
 
     return Config(
         provider=provider,
@@ -308,6 +351,7 @@ def load_config(path: str | Path) -> Config:
         safety=safety,
         gitlab=gitlab,
         storage=storage,
+        usage=usage,
     )
 
 
@@ -342,6 +386,74 @@ def _load_storage(storage_data: Any) -> StorageConfig:
         work_dir=work_dir,
         retention_days=retention_days,
         repo_retention_days=repo_retention_days,
+    )
+
+
+def _load_usage(usage_data: Any) -> UsageConfig:
+    if usage_data is None:
+        return UsageConfig()
+    if not isinstance(usage_data, dict):
+        raise ConfigError("'usage' must be a mapping")
+    defaults = UsageConfig()
+
+    enabled = usage_data.get("enabled", defaults.enabled)
+    if not isinstance(enabled, bool):
+        raise ConfigError("'usage.enabled' must be true or false")
+
+    source = usage_data.get("source", defaults.source)
+    if source not in ("opencode", "none"):
+        raise ConfigError("'usage.source' must be 'opencode' or 'none'")
+
+    list_command = _non_empty_str_list(
+        usage_data.get("session_list_command", defaults.session_list_command),
+        "usage.session_list_command",
+    )
+    export_command = _non_empty_str_list(
+        usage_data.get("session_export_command", defaults.session_export_command),
+        "usage.session_export_command",
+    )
+    if not any("{session_id}" in part for part in export_command):
+        raise ConfigError("'usage.session_export_command' must contain '{session_id}'")
+
+    windows = _non_empty_str_list(
+        usage_data.get("quota_windows", defaults.quota_windows), "usage.quota_windows"
+    )
+    if len(set(windows)) != len(windows):
+        raise ConfigError("'usage.quota_windows' must not repeat a window")
+
+    catalog = usage_data.get("price_catalog", defaults.price_catalog)
+    if not isinstance(catalog, str) or not catalog:
+        raise ConfigError("'usage.price_catalog' must be a non-empty string (URL or path)")
+
+    overrides_data = usage_data.get("price_overrides") or {}
+    if not isinstance(overrides_data, dict):
+        raise ConfigError("'usage.price_overrides' must be a mapping")
+    overrides: dict[str, dict[str, Any]] = {}
+    for key, entry in overrides_data.items():
+        field = f"usage.price_overrides[{key!r}]"
+        if not isinstance(key, str) or "/" not in key:
+            raise ConfigError(f"'{field}': key must be 'provider/model'")
+        if not isinstance(entry, dict):
+            raise ConfigError(f"'{field}' must be a mapping in the price catalog's format")
+        for name in PRICE_FIELDS:
+            if name in entry:
+                value = entry[name]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                    raise ConfigError(f"'{field}.{name}' must be a non-negative number")
+        if not any(name in entry for name in PRICE_FIELDS):
+            raise ConfigError(
+                f"'{field}' has no price field (expected some of: {', '.join(PRICE_FIELDS)})"
+            )
+        overrides[key] = dict(entry)
+
+    return UsageConfig(
+        enabled=enabled,
+        source=source,
+        session_list_command=list_command,
+        session_export_command=export_command,
+        quota_windows=windows,
+        price_catalog=catalog,
+        price_overrides=overrides,
     )
 
 

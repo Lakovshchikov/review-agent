@@ -125,6 +125,33 @@ storage:
   # заново). Отдельно от retention_days. null — не удалять по возрасту.
   repo_retention_days: 30
 
+# Учёт расхода ревью (необязательно; без секции — значения ниже). После
+# КАЖДОГО прогона в <work_dir>/usage/ledger.jsonl пишется одна запись:
+# токены (вместе с субагентами), время, модель, MR, размер изменения,
+# находки. Текста там нет. Сводка — `review-agent usage`.
+usage:
+  enabled: true                 # false — ни сбора, ни вопросов о квоте
+  source: opencode              # откуда токены: opencode | none
+  # Команды харнесса (только чтение). Если сессии --standalone-прогонов не
+  # находятся, добавьте сюда --standalone.
+  session_list_command: [opencode, session, list]
+  session_export_command: [opencode, session, export, "{session_id}"]
+  # Окна лимита подписки, о которых спрашивается в интерактивном прогоне
+  # одного MR (до ревью и после; Enter — пропустить).
+  quota_windows: [5h, week]
+  # Справочник цен LiteLLM: URL или локальный путь. Загружается заново при
+  # каждом `review-agent usage`; при недоступности — последняя копия из
+  # <work_dir>/usage/ с предупреждением. Прогоны ревью в сеть за ценами не ходят.
+  price_catalog: https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+  # Переопределения в формате записи справочника (можно скопировать запись
+  # оттуда и поправить); заменяют запись справочника целиком. Нужны, например,
+  # для модели, которой нет в справочнике (gpt-5.6-terra/luna там есть).
+  price_overrides:
+    openai/some-model-not-in-catalog:   # условное имя; цифры — пример
+      input_cost_per_token: 0.00000125
+      cache_read_input_token_cost: 0.000000125
+      output_cost_per_token: 0.00001
+
 # Опрос GitLab — нужна только для `review-agent poll` (ручной режим
 # `review-agent --repo ... --base ... --head ...` эту секцию игнорирует).
 # Кредов здесь НЕТ намеренно: `glab` должен быть заранее авторизован на

@@ -90,3 +90,20 @@ def test_clear_tmp_removes_everything_including_read_only_files(tmp_path):
 
     assert clear_tmp(work, lambda m: None) == 2
     assert list(work.tmp.iterdir()) == []
+
+
+def test_usage_area_survives_every_cleanup(tmp_path):
+    now = time.time()
+    work = WorkDir(tmp_path / "work")
+    ledger = _make(work.usage / "ledger.jsonl", 400, now)
+    catalog = _make(work.usage / "price-catalog.json", 400, now)
+    ledger.write_text('{"schema": "review-agent.usage/1"}\n', encoding="utf-8")
+    os.utime(ledger, (now - 400 * DAY, now - 400 * DAY))
+    _make(work.tmp / "leftover-run", 1, now, folder=True)
+
+    cleanup_expired(work, 1, warn=lambda m: None, now=now)
+    clear_tmp(work, warn=lambda m: None)
+
+    assert ledger.read_text(encoding="utf-8") == '{"schema": "review-agent.usage/1"}\n'
+    assert catalog.exists()
+    assert not any(work.tmp.iterdir())

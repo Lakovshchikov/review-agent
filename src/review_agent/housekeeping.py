@@ -20,6 +20,10 @@ by looking at one folder:
                     reviews - kept, deleted by age
       dry-run/      would-be comments of `poll --dry-run` - kept, by age
       debug/        all artifacts of runs made with --debug - kept, by age
+      usage/        usage accounting (usage_ledger.py): ledger.jsonl - one
+                    record per review run - and price-catalog.json, the
+                    last downloaded price catalog. Kept forever: neither
+                    transient nor expiring by age
 
 Nothing outside `work_dir` is ever deleted from here.
 """
@@ -40,6 +44,7 @@ from review_agent.config import Config
 Warn = Callable[[str], None]
 
 # Folders whose entries expire by age; tmp/ is emptied unconditionally instead.
+# usage/ is deliberately absent: the ledger is history, not an artifact.
 RETAINED_AREAS = ("logs", "dry-run", "debug")
 
 
@@ -70,6 +75,10 @@ class WorkDir:
     @property
     def debug(self) -> Path:
         return self.root / "debug"
+
+    @property
+    def usage(self) -> Path:
+        return self.root / "usage"
 
 
 def stamp(moment: datetime | None = None) -> str:

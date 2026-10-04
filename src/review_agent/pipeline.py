@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -25,6 +26,7 @@ from review_agent.prompt import (
     discover_repo_instructions_path,
     render_review_prompt,
 )
+from review_agent.usage_ledger import QuotaPrompt, QuotaReading, RunLabels, UsageRecorder
 from review_agent.worktree import managed_worktree
 
 
@@ -46,6 +48,9 @@ def run_review(
     config: Config | None = None,
     harness_runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     debug_dir: Path | None = None,
+    usage: UsageRecorder | None = None,
+    labels: RunLabels | None = None,
+    quota_prompt: QuotaPrompt | None = None,
 ) -> ReviewResult:
     """Run one full review and return the report and harness stderr.
 
@@ -54,6 +59,11 @@ def run_review(
     `debug_dir`, the run's files (prompt, safety note, report, harness
     stderr - not the worktree) are copied there before deletion.
     A failing harness raises HarnessError, which carries its stderr.
+
+    With `usage`, one ledger record is written for the run whatever its
+    outcome (usage_ledger.UsageRecorder never raises); with `quota_prompt`
+    the user is asked for subscription limit readings right before and
+    right after the harness. Neither changes the prompt or the result.
     """
     if config is None:
         if config_path is None:
@@ -99,6 +109,10 @@ def run_review(
             # report, so it is kept in the run folder (for --debug) and
             # handed back to the caller (for failed-review logs).
             stderr_file = run_dir / "harness-stderr.log"
+            quota_before = quota_prompt("before") if usage and quota_prompt else {}
+            outcome = "interrupted"
+            report: str | None = None
+            started = time.monotonic()
             try:
                 result = invoke_harness(
                     config.harness,
@@ -108,9 +122,34 @@ def run_review(
                     worktree_path=handle.path,
                     runner=harness_runner,
                 )
+                outcome = "succeeded"
+                report = result.stdout
             except HarnessError as exc:
+                outcome = "failed"
                 stderr_file.write_text(exc.stderr, encoding="utf-8")
                 raise
+            finally:
+                if usage is not None:
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    # No question after Ctrl+C: the user is leaving.
+                    quota_after = (
+                        quota_prompt("after") if quota_prompt and outcome != "interrupted" else {}
+                    )
+                    usage.record_run(
+                        worktree_path=handle.path,
+                        run_id=handle.run_id,
+                        labels=labels or RunLabels(source="manual"),
+                        base_sha=base_sha,
+                        head_sha=head_sha,
+                        provider=config.provider,
+                        skills=config.skills,
+                        outcome=outcome,
+                        duration_ms=duration_ms,
+                        report=report,
+                        quota=QuotaReading(
+                            provider=config.provider.name, before=quota_before, after=quota_after
+                        ),
+                    )
             stderr_file.write_text(result.stderr, encoding="utf-8")
             (run_dir / "report.md").write_text(result.stdout, encoding="utf-8")
             return ReviewResult(
