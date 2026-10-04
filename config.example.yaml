@@ -1,55 +1,25 @@
 # Пример конфигурации review-agent. Скопируйте в config.yaml и отредактируйте.
-# Полный контекст решений — см. /AGENTS.md.
-#
-# Синтаксис ниже сверен ВЖИВУЮ с реальным OpenCode CLI v2.0.21 (opencode
-# --help, opencode run --help, opencode debug agents, и прямыми прогонами
-# с реальным облачным провайдером) — не предположение, а проверенные факты,
-# включая несколько, которые изначально предполагались иначе и были
-# исправлены после реального тестирования (см. harness_config.py).
+# Справочник всех ключей (тип, значение по умолчанию, смысл): docs/configuration.md
+# Относительные пути считаются от текущей папки процесса.
 
 provider:
-  # Имя провайдера и модель — склеиваются адаптером в строку вида
-  # "anthropic/claude-sonnet-4-5#medium" (см. ниже про reasoning_effort).
-  # НЕ дублируйте имя провайдера в поле model (т.е. НЕ "anthropic/claude-...").
+  # Провайдер и модель OpenCode; склеиваются в "anthropic/claude-sonnet-4-5#medium".
+  # Не повторяйте провайдера в model (НЕ "anthropic/claude-...").
   name: anthropic
   model: claude-sonnet-4-5
-  # Reasoning effort задаётся явно — не оставляем харнессу default.
-  # В OpenCode это и есть "variant" в модельной строке provider/model#variant
-  # (напр. #high, #medium, #low — см. https://opencode.ai/docs/models).
-  # ВАЖНО (проверено вживую): variant существует не у всех моделей — для
-  # локальных моделей (напр. Ollama) без явно заданных вариантов суффикс
-  # ломает вызов ("Variant unavailable"). Для таких моделей ставьте явно
-  # `reasoning_effort: null` — поле обязательно (ключ должен быть), но
-  # значение может быть null, если применимость явно не нужна.
+  # Обязательный ключ: low / medium / high… (variant OpenCode).
+  # null — для моделей без вариантов (локальные), иначе "Variant unavailable".
   reasoning_effort: medium
-  # Имя переменной окружения, где лежит ключ провайдера (сам ключ в
-  # конфиг не кладём). Настраивается через `opencode auth login`.
+  # Только для справки, движком не читается: авторизация — `opencode auth login`.
   api_key_env: ANTHROPIC_API_KEY
 
 harness:
-  # Шаблон команды харнесса. Плейсхолдеры подставляются адаптером:
-  #   {model}       -> "<provider.name>/<provider.model>#<reasoning_effort>"
-  #   {prompt_file} -> путь к файлу с отрендеренным review-промптом ЦЕЛИКОМ
-  #   {agent}       -> имя сгенерированного read-only агента (= harness.agent_name)
-  #
-  # ВАЖНО (проверено вживую, реальный баг): промпт передаётся через
-  # `--file {prompt_file}`, а НЕ как позиционный текстовый аргумент
-  # ("{prompt}"). На Windows `opencode` резолвится через PATH в
-  # `opencode.CMD` (npm-шим) — такой .CMD-файл Windows исполняет через
-  # cmd.exe, а cmd.exe обрывает аргумент на первом переводе строки. Из-за
-  # этого позиционный многострочный промпт долетал до модели ОБРЕЗАННЫМ
-  # до первой строки ("Role: Senior Software Engineer." и всё) — модель
-  # честно отвечала на то немногое, что получила, без единого вызова
-  # инструмента. `--file` передаёт содержимое как вложение, минуя
-  # построчный парсинг cmd.exe, и было подтверждено вживую: модель видит
-  # сообщение целиком, включая все абзацы после первого.
+  # Шаблон вызова харнесса. Плейсхолдеры: {agent}, {model}, {prompt_file}.
+  # --standalone и передача промпта через --file ОБЯЗАТЕЛЬНЫ, менять не нужно —
+  # почему, см. docs/decisions.md.
   command:
     - opencode
     - run
-    # --standalone ОБЯЗАТЕЛЕН (проверено вживую): без него opencode
-    # использует долгоживущий background-сервис, который может не знать
-    # о только что созданном worktree (каждый прогон — новая директория)
-    # и упасть с "Agent not found" на только что сгенерированном агенте.
     - --standalone
     - --agent
     - "{agent}"
@@ -58,30 +28,21 @@ harness:
     - --file
     - "{prompt_file}"
     - "Внимательно прочитай вложенный файл целиком и строго следуй его инструкциям."
-  # Имя агента, которого движок генерирует в opencode.json внутри worktree.
-  # Подробнее про permission-карту — src/review_agent/harness_config.py.
+  # Имя read-only агента, которого review-agent генерирует в opencode.json worktree.
   agent_name: reviewer
 
 report:
-  # {run_id} подставляется автоматически (уникален на каждый прогон).
+  # Отчёт ручного режима (`review-agent --repo ...`); {run_id} подставляется.
   output_path: "./reports/review-{run_id}.md"
 
-# Опциональные knowledge-skill файлы — подсказки по паттернам ошибок,
-# не ограничение. По умолчанию пусто (без skill'ов).
+# Knowledge-skill файлы — подсказки агенту, не ограничение. Только абсолютные пути.
 skills: []
 
 safety:
+  # Пишется только в safety-note прогона; язык отчёта задан в промпте (русский).
   output_language: ru
-  # DENYLIST паттернов для bash (не allowlist!). Изначально задумывался
-  # allowlist (deny-by-default безопаснее denylist'а, который можно
-  # обойти чуть другим вызовом) — но проверено вживую на реальном
-  # облачном провайдере: если добавить "*": "deny" в карту permission.bash,
-  # bash-инструмент становится ПОЛНОСТЬЮ недоступен, даже для явно
-  # разрешённых паттернов. Без catch-all'а неперечисленные команды
-  # разрешены по умолчанию. Поэтому единственный рабочий вариант —
-  # denylist конкретных опасных паттернов (слабее принципиально, но это
-  # то, что реально работает в этой версии OpenCode). Подробности и
-  # живая проверка — src/review_agent/harness_config.py.
+  # DENYLIST shell-команд агента (всё неперечисленное разрешено; allowlist
+  # в OpenCode 2.0.21 не работает — docs/decisions.md). Свой список заменяет этот целиком.
   denied_bash_patterns:
     - "npm *"
     - "npx *"
@@ -104,90 +65,56 @@ safety:
     - "powershell *"
     - "cmd *"
 
-# Рабочая папка: ВСЁ, что review-agent пишет на диск (worktree, промпты,
-# отчёты, тела запросов, lock, логи, dry-run, debug), лежит только здесь —
-# кроме итогового отчёта ручного режима (report.output_path). Раскладка:
-#   tmp/      временное — удаляется сразу после каждого MR; после прохода пусто
-#   logs/     лог каждого прохода + stderr харнесса упавших ревью
-#   dry-run/  несостоявшиеся комментарии `poll --dry-run`
-#   debug/    все артефакты прогонов с флагом --debug
-#   repos/    кэш-клоны проектов без local_repo — живут дольше прохода
-#   poll.lock один прогон за раз на эту папку
-# Относительный путь считается от текущей папки процесса (у задачи Task
-# Scheduler это папка проекта — её задаёт scripts/register-task.ps1).
+# Рабочая папка: всё, что пишет review-agent (кроме отчётов ручного режима).
+# Раскладка и что когда удаляется — docs/work-dir.md.
 storage:
   work_dir: ./.review-agent
-  # logs/, dry-run/ и debug/ старше этого числа дней удаляются в начале
-  # каждого прохода `poll`. null — не удалять по возрасту.
+  # logs/, dry-run/, debug/ старше N дней удаляются в начале прохода poll; null — не удалять.
   retention_days: 7
-  # Кэш-клон в repos/, которым ни одно ревью не пользовалось дольше этого
-  # числа дней, удаляется в начале прохода (при следующей нужде склонируется
-  # заново). Отдельно от retention_days. null — не удалять по возрасту.
+  # Кэш-клон в repos/, не использовавшийся N дней, удаляется; null — не удалять.
   repo_retention_days: 30
 
-# Учёт расхода ревью (необязательно; без секции — значения ниже). После
-# КАЖДОГО прогона в <work_dir>/usage/ledger.jsonl пишется одна запись:
-# токены (вместе с субагентами), время, модель, MR, размер изменения,
-# находки. Текста там нет. Сводка — `review-agent usage`.
+# Учёт расхода (секция необязательна; ниже — значения по умолчанию).
+# Подробно — docs/usage-accounting.md.
 usage:
-  enabled: true                 # false — ни сбора, ни вопросов о квоте
-  source: opencode              # откуда токены: opencode | none
-  # Команды харнесса (только чтение). Если сессии --standalone-прогонов не
-  # находятся, добавьте сюда --standalone.
+  enabled: true                 # false — ни журнала, ни вопросов о квоте
+  source: opencode              # opencode | none
+  # Если сессии прогонов не находятся, добавьте сюда --standalone.
   session_list_command: [opencode, session, list]
   session_export_command: [opencode, session, export, "{session_id}"]
-  # Окна лимита подписки, о которых спрашивается в интерактивном прогоне
-  # одного MR (до ревью и после; Enter — пропустить).
-  quota_windows: [5h, week]
-  # Справочник цен LiteLLM: URL или локальный путь. Загружается заново при
-  # каждом `review-agent usage`; при недоступности — последняя копия из
-  # <work_dir>/usage/ с предупреждением. Прогоны ревью в сеть за ценами не ходят.
+  quota_windows: [5h, week]     # окна лимита подписки для интерактивного замера
+  # Справочник цен LiteLLM (URL или путь); загружается заново при каждом `review-agent usage`.
   price_catalog: https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
-  # Переопределения в формате записи справочника (можно скопировать запись
-  # оттуда и поправить); заменяют запись справочника целиком. Нужны, например,
-  # для модели, которой нет в справочнике (gpt-5.6-terra/luna там есть).
+  # Свои цены в формате записи справочника; заменяют запись справочника целиком.
   price_overrides:
     openai/some-model-not-in-catalog:   # условное имя; цифры — пример
       input_cost_per_token: 0.00000125
       cache_read_input_token_cost: 0.000000125
       output_cost_per_token: 0.00001
 
-# Опрос GitLab — нужна только для `review-agent poll` (ручной режим
-# `review-agent --repo ... --base ... --head ...` эту секцию игнорирует).
-# Кредов здесь НЕТ намеренно: `glab` должен быть заранее авторизован на
-# машине запуска (`glab auth login --hostname <hostname>`), комментарии
-# публикуются от имени этой учётной записи.
+# Опрос GitLab — только для `review-agent poll`. Кредов здесь нет: `glab` должен
+# быть авторизован (`glab auth login --hostname <hostname>`), комментарии
+# публикуются от его учётной записи. Подробно — docs/polling.md.
 gitlab:
   hostname: gitlab.example.local
-  # username'ы GitLab: MR берётся в работу, если ХОТЯ БЫ ОДИН из них
-  # назначен ревьюером (не автором и не assignee). Можно не указывать,
-  # если у каждого включённого проекта есть свой `reviewers`.
+  # MR берётся, если хотя бы один из них назначен ревьюером (не автором/assignee).
+  # Можно не указывать, если у каждого включённого проекта свой reviewers.
   reviewers:
     - ai-reviewer
-  # Draft-MR по умолчанию пропускаются.
-  review_drafts: false
-  # Отчёт короче этого числа символов (или пустой) НЕ публикуется — защита
-  # от "тихо пустого" отчёта (см. validation-notes.md Change 1).
-  min_report_chars: 200
-  # Пока MR ревьюится, на нём висит claim-комментарий бота «ревью
-  # выполняется». Claim старше этого числа минут считается брошенным (проход
-  # умер) и снимается следующим проходом. Должен быть НЕ меньше лимита
-  # времени задачи Task Scheduler (-ExecutionTimeLimitHours, по умолчанию 4 ч).
+  review_drafts: false          # draft-MR пропускаются
+  min_report_chars: 200         # более короткий или пустой отчёт не публикуется
+  # Claim «ревью выполняется» старше N минут считается брошенным.
+  # Не меньше лимита задачи Task Scheduler (-ExecutionTimeLimitHours, 4 ч).
   claim_ttl_minutes: 240
   projects:
-    # Минимальная запись — только путь проекта в GitLab. Без local_repo
-    # review-agent сам держит bare-клон https://<hostname>/<path>.git в
-    # <work_dir>/repos/ (клонирует при первом ревью MR, авторизуется через
-    # тот же `glab`, зависимости не ставит).
+    # Только путь: review-agent сам держит bare-клон в <work_dir>/repos/ (авторизация через glab).
     - path: b2c/front-shopping
-    # Либо свой готовый клон: review-agent только делает в нём fetch веток MR.
+    # Свой клон: review-agent только делает в нём fetch веток MR.
     - path: b2c/front-tools
-      local_repo: C:/repos/front-tools   # локальный клон
-      remote: origin                     # remote клона (по умолчанию origin); только вместе с local_repo
-    # Необязательные переопределения проекта: enabled, reviewers,
-    # review_drafts, provider, skills. Не указано — берётся глобальное
-    # значение; указано — ЗАМЕНЯЕТ глобальное целиком (provider — весь
-    # блок, со своим reasoning_effort; skills: [] — явно без skill'ов).
+      local_repo: C:/repos/front-tools
+      remote: origin                     # по умолчанию origin; только вместе с local_repo
+    # Переопределения проекта: enabled, reviewers, review_drafts, provider, skills.
+    # Заменяют глобальное значение целиком (provider — весь блок со своим reasoning_effort).
     - path: b2c/front-checkout
       local_repo: C:/repos/front-checkout
       reviewers: [ai-reviewer, checkout-lead]
@@ -196,8 +123,7 @@ gitlab:
         model: gpt-5
         reasoning_effort: high
       skills: []
-    # Выключенный проект не опрашивается и не считается сбоем (его клон
-    # может и не существовать).
+    # Выключенный проект не опрашивается и не считается сбоем.
     - path: b2c/legacy-admin
       local_repo: C:/repos/legacy-admin
       enabled: false
