@@ -251,7 +251,7 @@ def make_recorder(config: Config, *, warn: Warn, note: Warn) -> UsageRecorder | 
         return None
     return UsageRecorder(
         WorkDir.from_config(config).usage / LEDGER_NAME,
-        make_usage_source(config.usage),
+        make_usage_source(config),
         warn=warn,
         note=note,
     )

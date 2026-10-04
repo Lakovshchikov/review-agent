@@ -251,6 +251,10 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
   будем). Кандидаты: заголовки `x-codex-*-used-percent` в debug-логе
   OpenCode (проверить при живой проверке change) или Codex CLI как харнесс
   (`codex exec --json` отдаёт rate limits по прогону)
+- учёт расхода, продолжение `review-usage-accounting`: отправка записей по
+  OTLP в collector (Grafana/Langfuse) для этапа CI, строка расхода в
+  комментарии к MR, LiteLLM-шлюз как корпоративный учёт расходов на API,
+  выбор модели по размеру MR на данных журнала
 
 ## 8. Процесс работы над самим проектом
 
@@ -275,6 +279,7 @@ review-agent --help         # ручное ревью диапазона ком�
 review-agent poll --help    # проход опроса GitLab
 review-agent poll --dry-run # первый безопасный прогон на реальном GitLab
 review-agent poll --all --debug   # проход без вопросов, артефакты прогонов — в <work_dir>/debug/
+review-agent usage --by model     # сводка расхода: токены, API-эквивалент $, доля лимитов
 ```
 
 ```powershell
@@ -287,8 +292,11 @@ Get-ScheduledTaskInfo -TaskName review-agent-poll          # LastTaskResult: 0/1
 Всё, что пишет review-agent, — в `storage.work_dir` конфига (по
 умолчанию `./.review-agent`): `tmp/` пуст после прохода, `logs/` — лог
 каждого прохода, `repos/` — кэш-клоны проектов без `local_repo` (живут
-`storage.repo_retention_days` с последнего использования). Флага
-`--scratch-dir` больше нет.
+`storage.repo_retention_days` с последнего использования), `usage/` —
+журнал расхода `ledger.jsonl` (одна запись на прогон, не чистится) и копия
+справочника цен. Интерактивный прогон одного MR спрашивает проценты лимитов
+подписки до и после ревью (Enter — пропустить); в `--all` вопросов нет.
+Флага `--scratch-dir` больше нет.
 
 Внешние инструменты (не Python-зависимости): `git`, `opencode`
 (харнесс), `glab` (только для `poll`, заранее авторизованный —

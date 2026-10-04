@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, Protocol
 from review_agent.proc import no_window_flags
 
 if TYPE_CHECKING:
-    from review_agent.config import UsageConfig
+    from review_agent.config import Config
 
 TOKEN_KINDS = ("input", "cache_read", "cache_write", "output", "reasoning")
 
@@ -189,11 +189,15 @@ class OpenCodeUsageSource:
         list_command: list[str],
         export_command: list[str],
         *,
+        version_command: list[str] | None = None,
         runner: Runner = subprocess.run,
         which: Callable[[str], str | None] = shutil.which,
     ) -> None:
         self.list_command = list_command
         self.export_command = export_command
+        # The harness that runs the reviews - not whatever the list command
+        # starts with (it may be a wrapper).
+        self.version_command = version_command or ["opencode", "--version"]
         self._runner = runner
         self._which = which
         self._version: str | None | object = _MISSING  # cached per process
@@ -220,7 +224,7 @@ class OpenCodeUsageSource:
         if self._version is _MISSING:
             version: str | None = None
             try:
-                result = self._run([self.list_command[0], "--version"], cwd)
+                result = self._run(self.version_command, cwd)
                 match = _VERSION.search(result.stdout or "")
                 version = match.group(1) if result.returncode == 0 and match else None
             except (OSError, subprocess.SubprocessError):
@@ -390,7 +394,12 @@ class OpenCodeUsageSource:
             return usage
 
 
-def make_usage_source(usage_config: "UsageConfig") -> UsageSource:
+def make_usage_source(config: "Config") -> UsageSource:
+    usage_config = config.usage
     if usage_config.source == "none":
         return NoUsageSource()
-    return OpenCodeUsageSource(usage_config.session_list_command, usage_config.session_export_command)
+    return OpenCodeUsageSource(
+        usage_config.session_list_command,
+        usage_config.session_export_command,
+        version_command=[config.harness.command[0], "--version"],
+    )

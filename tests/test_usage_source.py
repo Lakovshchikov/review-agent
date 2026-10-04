@@ -263,3 +263,20 @@ def test_failing_list_command(tmp_path):
 def test_none_source():
     usage = NoUsageSource().collect(Path("."))
     assert usage.sessions == [] and usage.missing_reason
+
+
+def test_version_comes_from_the_harness_not_the_list_command(tmp_path):
+    from review_agent.config import load_config
+    from review_agent.usage_source import make_usage_source
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        "provider: {name: p, model: m, reasoning_effort: null}\n"
+        "harness: {command: [opencode, run]}\n"
+        "report: {output_path: o.md}\n"
+        "usage: {session_list_command: [python, wrapper.py]}\n",
+        encoding="utf-8",
+    )
+    source = make_usage_source(load_config(cfg))
+    assert source.version_command == ["opencode", "--version"]
+    assert source.list_command == ["python", "wrapper.py"]
