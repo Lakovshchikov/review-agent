@@ -59,6 +59,7 @@ from review_agent.housekeeping import (
 )
 from review_agent.lock import LOCK_FILE_NAME, PollLockBusy, pid_alive, poll_lock  # noqa: F401
 from review_agent.passlog import PassLog, pass_log
+from review_agent.prompt_check import check_settings, may_proceed, project_targets
 from review_agent.proc import no_window_flags
 from review_agent.pipeline import ReviewResult, run_review
 from review_agent.usage_ledger import QuotaPrompt, RunLabels, UsageRecorder, make_recorder
@@ -522,6 +523,21 @@ def run_poll(
                     "Интерактивный режим требует терминала, а stdin не интерактивный. "
                     "Для запуска без вопросов (планировщик, CI) используйте --all."
                 )
+                return EXIT_NOT_STARTED
+
+            # Prompt templates of every project this pass may review, before
+            # the lock, GitLab and any claim: a refusal leaves nothing behind.
+            enabled = [p for p in config.gitlab.projects if p.enabled]
+            check = check_settings(project_targets(config, enabled))
+            if not may_proceed(
+                check,
+                ask=None if review_all else input_fn,
+                show_error=log.error,
+                # Each line of the report is already tagged WARNING.
+                show_warning=lambda message: log.warning(message, prefix=False),
+            ):
+                if not check.errors:
+                    log.info("Проход отменён: предупреждения шаблонов промпта не приняты.")
                 return EXIT_NOT_STARTED
 
             try:

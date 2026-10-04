@@ -149,3 +149,31 @@ def test_unwritable_ledger_warns_instead_of_raising(tmp_path):
 
 def test_missing_ledger_reads_as_empty(tmp_path):
     assert read_records(tmp_path / "nope.jsonl") == ([], 0)
+
+
+# -- prompt template in the record ---------------------------------------------
+
+import hashlib
+from importlib import resources
+
+from review_agent.prompt import BUILTIN_TEMPLATE
+
+
+def test_record_names_builtin_template_by_default():
+    record = _record()
+    assert record["review.prompt.template"] == BUILTIN_TEMPLATE
+    builtin = resources.files("review_agent").joinpath("prompts", "default.md.j2").read_bytes()
+    assert record["review.prompt.sha256"] == hashlib.sha256(builtin).hexdigest()
+
+
+def test_record_names_custom_template_with_its_hash(tmp_path):
+    template = tmp_path / "backend.md.j2"
+    template.write_text('{% extends "builtin/default.md.j2" %}', encoding="utf-8")
+    record = _record(prompt_template=str(template))
+    assert record["review.prompt.template"] == str(template)
+    assert record["review.prompt.sha256"] == hashlib.sha256(template.read_bytes()).hexdigest()
+
+
+def test_record_with_unreadable_template_has_no_hash(tmp_path):
+    record = _record(prompt_template=str(tmp_path / "missing.md.j2"))
+    assert record["review.prompt.sha256"] is None

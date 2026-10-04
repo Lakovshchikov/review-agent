@@ -8,6 +8,8 @@
 - `review-agent usage [--since] [--until] [--by] [--format] [--wide]` - summary of
   the usage ledger (usage_summary.py); reads the ledger and downloads the
   price catalog, nothing else.
+- `review-agent prompt-check [--project | --template] [--show]` - checks prompt
+  templates (prompt_check.py); no review, no GitLab, no lock.
 
 Neither starts a scheduler or daemon (see AGENTS.md section 5). Both
 write only under `storage.work_dir` from the config (housekeeping.py),
@@ -160,6 +162,88 @@ def build_usage_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_prompt_check_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="review-agent prompt-check",
+        description=(
+            "Check review prompt templates without running a review: unknown variables "
+            "and syntax errors (errors), template variables left unused and missing skill "
+            "files (warnings). Exit status: 0 clean, 1 warnings only, 2 errors."
+        ),
+    )
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument(
+        "--project",
+        default=None,
+        help="Check only this project's effective settings (GitLab path, e.g. group/project).",
+    )
+    target.add_argument(
+        "--template",
+        default=None,
+        help="Check this template file on its own, without the configured projects.",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Also print each prompt rendered with sample values.",
+    )
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to the review-agent YAML config (default: config.yaml).",
+    )
+    return parser
+
+
+def prompt_check_main(argv: list[str]) -> int:
+    args = build_prompt_check_arg_parser().parse_args(argv)
+
+    import os
+
+    from review_agent.config import ConfigError, PromptSettings, load_config
+    from review_agent.prompt import BUILTIN_TEMPLATE
+    from review_agent.prompt_check import (
+        EXIT_ERRORS,
+        check_settings,
+        global_target,
+        project_targets,
+    )
+
+    try:
+        config = load_config(Path(args.config))
+    except ConfigError as exc:
+        if args.template is None:
+            print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
+            return EXIT_ERRORS
+        # A lone template needs no config; only the skills come from it.
+        print(f"Конфиг не загружен, skills не проверяются: {exc}", file=sys.stderr)
+        config = None
+
+    if args.template is not None:
+        template = None if args.template == BUILTIN_TEMPLATE else os.path.abspath(args.template)
+        targets = [("--template", PromptSettings(template=template), config.skills if config else [])]
+    elif args.project is not None:
+        projects = [p for p in (config.gitlab.projects if config.gitlab else []) if p.path == args.project]
+        if not projects:
+            print(f"Проект '{args.project}' не найден в gitlab.projects конфига.", file=sys.stderr)
+            return EXIT_ERRORS
+        targets = project_targets(config, projects)
+    else:
+        targets = [global_target(config)]
+        if config.gitlab is not None:
+            for path, prompt, skills in project_targets(config, config.gitlab.projects):
+                enabled = next(p.enabled for p in config.gitlab.projects if p.path == path)
+                targets.append((path if enabled else f"{path} (выключен)", prompt, skills))
+
+    result = check_settings(targets, want_preview=args.show)
+    _print_safe(result.format())
+    if args.show:
+        for report in result.reports:
+            _print_safe(f"\n----- {report.label} ({', '.join(report.users)}) -----")
+            _print_safe(report.preview if report.preview is not None else "(не отрендерен: есть ошибки)")
+    return result.exit_code
+
+
 def _print_safe(text: str) -> None:
     """print() that survives a console code page without Cyrillic."""
     try:
@@ -238,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         return poll_main(argv[1:])
     if argv and argv[0] == "usage":
         return usage_main(argv[1:])
+    if argv and argv[0] == "prompt-check":
+        return prompt_check_main(argv[1:])
 
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -249,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     from review_agent.housekeeping import WorkDir, stamp
     from review_agent.lock import PollLockBusy, poll_lock
     from review_agent.polling import stdin_is_interactive
+    from review_agent.prompt_check import check_settings, global_target, may_proceed
     from review_agent.quota_prompt import make_quota_prompt
     from review_agent.report import write_report
     from review_agent.usage_ledger import RunLabels, make_recorder
@@ -263,6 +350,18 @@ def main(argv: list[str] | None = None) -> int:
 
     def to_stderr(message: str) -> None:
         print(f"Предупреждение: {message}", file=sys.stderr)
+
+    # The global prompt settings, before the lock and the worktree.
+    check = check_settings([global_target(config)])
+    if not may_proceed(
+        check,
+        ask=input if stdin_is_interactive() else None,
+        show_error=lambda message: print(message, file=sys.stderr),
+        show_warning=lambda message: print(message, file=sys.stderr),
+    ):
+        if not check.errors:
+            print("Ревью отменено: предупреждения шаблона промпта не приняты.", file=sys.stderr)
+        return 2
 
     usage = make_recorder(config, warn=to_stderr, note=to_stderr)
     quota_prompt = (

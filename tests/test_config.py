@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,11 @@ def test_example_config_loads_without_error():
     assert config.gitlab.projects[1].local_remote == "origin"
     assert config.gitlab.projects[2].provider.reasoning_effort == "high"
     assert config.gitlab.projects[2].skills == []
-    assert config.gitlab.projects[3].enabled is False
+    assert config.gitlab.projects[3].prompt.template.endswith("backend-java.md.j2")
+    assert config.gitlab.projects[3].prompt.instruction_files is None
+    assert config.gitlab.projects[4].enabled is False
+    assert config.prompt.template is None
+    assert config.prompt.instruction_files[0] == "AGENTS.md"
 
 
 def test_missing_required_field_raises(tmp_path):
@@ -196,7 +201,7 @@ def test_config_without_new_fields_keeps_old_behaviour(tmp_path):
     assert settings.reviewers == ["bot"]
     assert settings.review_drafts is False
     assert settings.config.provider == config.provider
-    assert settings.config.skills == ["global-skill.md"]
+    assert settings.config.skills == [os.path.abspath("global-skill.md")]
 
 
 def test_project_overrides_replace_global_values(tmp_path):
@@ -227,7 +232,7 @@ def test_project_overrides_replace_global_values(tmp_path):
     assert settings.config.provider.api_key_env is None  # replaced whole, not merged
     assert settings.config.skills == []
     # The global config itself is untouched.
-    assert config.provider.name == "openai" and config.skills == ["global-skill.md"]
+    assert config.provider.name == "openai" and config.skills == [os.path.abspath("global-skill.md")]
     assert dataclasses.replace(settings.config, provider=config.provider, skills=config.skills) == config
 
 
@@ -443,3 +448,113 @@ def test_usage_section_loads_values(tmp_path):
 def test_invalid_usage_section(tmp_path, usage, message):
     with pytest.raises(ConfigError, match=message):
         load_config(_write_cfg(tmp_path, usage=usage))
+
+
+# -- prompt settings: built-in defaults <- global <- project, per key ----------
+
+from review_agent.config import PromptSettings
+from review_agent.prompt import BUILTIN_TEMPLATE, DEFAULT_DOCS_DIRS, DEFAULT_INSTRUCTION_FILES
+
+
+def _projects(*projects):
+    return {"reviewers": ["bot"], "projects": [{"local_repo": "c", **p} for p in projects]}
+
+
+def test_prompt_defaults_when_nothing_set(tmp_path):
+    config = load_config(_write_cfg(tmp_path, gitlab=_projects({"path": "a/b"})))
+    assert config.prompt == PromptSettings()
+    assert config.prompt.template is None
+    assert config.prompt.instruction_files == list(DEFAULT_INSTRUCTION_FILES)
+    assert config.prompt.docs_dirs == list(DEFAULT_DOCS_DIRS)
+    settings = effective_settings(config, config.gitlab.projects[0])
+    assert settings.config.prompt == PromptSettings()
+
+
+def test_project_overrides_only_template(tmp_path):
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            prompt={"instruction_files": ["CONTRIBUTING.md"], "docs_dirs": ["wiki"]},
+            gitlab=_projects({"path": "a/b", "prompt": {"template": "prompts/backend.md.j2"}}, {"path": "c/d"}),
+        )
+    )
+    own = effective_settings(config, config.gitlab.projects[0]).config.prompt
+    assert own.template == os.path.abspath("prompts/backend.md.j2")
+    assert own.instruction_files == ["CONTRIBUTING.md"]
+    assert own.docs_dirs == ["wiki"]
+    other = effective_settings(config, config.gitlab.projects[1]).config.prompt
+    assert other == config.prompt and other.template is None
+
+
+def test_project_list_replaces_global_list(tmp_path):
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            prompt={"instruction_files": ["A.md", "B.md"]},
+            gitlab=_projects({"path": "a/b", "prompt": {"instruction_files": []}}),
+        )
+    )
+    prompt = effective_settings(config, config.gitlab.projects[0]).config.prompt
+    assert prompt.instruction_files == []
+    assert prompt.docs_dirs == list(DEFAULT_DOCS_DIRS)
+
+
+def test_project_null_template_means_builtin_absent_means_inherit(tmp_path):
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            prompt={"template": "global.md.j2"},
+            gitlab=_projects(
+                {"path": "a/b", "prompt": {"template": None}},
+                {"path": "c/d", "prompt": {"docs_dirs": ["x"]}},
+            ),
+        )
+    )
+    assert config.prompt.template == os.path.abspath("global.md.j2")
+    assert effective_settings(config, config.gitlab.projects[0]).config.prompt.template is None
+    assert config.gitlab.projects[0].prompt.template == BUILTIN_TEMPLATE
+    inherited = effective_settings(config, config.gitlab.projects[1]).config.prompt
+    assert inherited.template == os.path.abspath("global.md.j2")
+
+
+def test_builtin_name_as_template_value(tmp_path):
+    config = load_config(_write_cfg(tmp_path, prompt={"template": BUILTIN_TEMPLATE}))
+    assert config.prompt.template is None
+
+
+@pytest.mark.parametrize(
+    "prompt, match",
+    [
+        ("x", r"'prompt' must be a mapping"),
+        ({"template": 5}, r"'prompt.template' must be a file path or null"),
+        ({"template": ""}, r"'prompt.template' must be a file path or null"),
+        ({"instruction_files": "AGENTS.md"}, r"'prompt.instruction_files' must be a list"),
+        ({"docs_dirs": [""]}, r"'prompt.docs_dirs' must be a list"),
+        ({"instructions_files": []}, r"'prompt' has unknown keys: instructions_files"),
+    ],
+)
+def test_invalid_global_prompt(tmp_path, prompt, match):
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write_cfg(tmp_path, prompt=prompt))
+
+
+def test_invalid_project_prompt_names_project(tmp_path):
+    path = _write_cfg(tmp_path, gitlab=_projects({"path": "a/b", "prompt": {"template": 1}}))
+    with pytest.raises(ConfigError, match=r"gitlab.projects\[0\].prompt.template"):
+        load_config(path)
+
+
+def test_relative_paths_made_absolute_against_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            prompt={"template": "prompts/main.md.j2"},
+            gitlab=_projects({"path": "a/b", "skills": ["skills/p.md"], "prompt": {"template": "p.md.j2"}}),
+        )
+    )
+    assert config.skills == [str(tmp_path / "global-skill.md")]
+    assert config.prompt.template == str(tmp_path / "prompts" / "main.md.j2")
+    project = config.gitlab.projects[0]
+    assert project.skills == [str(tmp_path / "skills" / "p.md")]
+    assert project.prompt.template == str(tmp_path / "p.md.j2")

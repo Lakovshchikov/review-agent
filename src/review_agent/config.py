@@ -9,10 +9,13 @@ providers or harnesses never requires a code change.
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from review_agent.prompt import BUILTIN_TEMPLATE, DEFAULT_DOCS_DIRS, DEFAULT_INSTRUCTION_FILES
 
 
 class ConfigError(ValueError):
@@ -99,6 +102,35 @@ class SafetyConfig:
             "cmd *",
         ]
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class PromptSettings:
+    """What the review prompt is built from (prompt.py, docs/prompt.md).
+
+    `template` is an absolute path, or None for the built-in template.
+    The candidate lists are relative to the reviewed repository's root;
+    the first existing entry is pointed to in the prompt.
+    """
+
+    template: str | None = None
+    instruction_files: list[str] = dataclasses.field(
+        default_factory=lambda: list(DEFAULT_INSTRUCTION_FILES)
+    )
+    docs_dirs: list[str] = dataclasses.field(default_factory=lambda: list(DEFAULT_DOCS_DIRS))
+
+
+@dataclasses.dataclass(frozen=True)
+class PromptOverrides:
+    """A `prompt` section as written: None = "not set, inherit", per key.
+
+    `template` is BUILTIN_TEMPLATE when the section explicitly sets
+    `template: null` (back to the built-in one), unlike an absent key.
+    """
+
+    template: str | None = None
+    instruction_files: list[str] | None = None
+    docs_dirs: list[str] | None = None
 
 
 DEFAULT_WORK_DIR = "./.review-agent"
@@ -188,6 +220,9 @@ class GitLabProjectConfig:
     review_drafts: bool | None = None
     provider: ProviderConfig | None = None
     skills: list[str] | None = None
+    # Unlike the settings above, merged key by key with the global
+    # `prompt` section (see merge_prompt).
+    prompt: PromptOverrides | None = None
 
     @property
     def local_remote(self) -> str:
@@ -225,6 +260,7 @@ class Config:
     gitlab: GitLabConfig | None = None
     storage: StorageConfig = dataclasses.field(default_factory=StorageConfig)
     usage: UsageConfig = dataclasses.field(default_factory=UsageConfig)
+    prompt: PromptSettings = dataclasses.field(default_factory=PromptSettings)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -233,9 +269,27 @@ class ProjectSettings:
 
     reviewers: list[str]
     review_drafts: bool
-    # Global config with provider/skills replaced by the project's own,
-    # handed to the engine as is.
+    # Global config with provider/skills/prompt replaced by the project's
+    # own, handed to the engine as is.
     config: Config
+
+
+def merge_prompt(base: PromptSettings, overrides: PromptOverrides | None) -> PromptSettings:
+    """Key by key: a key that is set replaces the value below, the rest are inherited."""
+    if overrides is None:
+        return base
+    template = base.template
+    if overrides.template is not None:
+        template = None if overrides.template == BUILTIN_TEMPLATE else overrides.template
+    return PromptSettings(
+        template=template,
+        instruction_files=(
+            overrides.instruction_files
+            if overrides.instruction_files is not None
+            else base.instruction_files
+        ),
+        docs_dirs=overrides.docs_dirs if overrides.docs_dirs is not None else base.docs_dirs,
+    )
 
 
 def effective_settings(config: Config, project: GitLabProjectConfig) -> ProjectSettings:
@@ -251,6 +305,7 @@ def effective_settings(config: Config, project: GitLabProjectConfig) -> ProjectS
             config,
             provider=project.provider if project.provider is not None else config.provider,
             skills=project.skills if project.skills is not None else config.skills,
+            prompt=merge_prompt(config.prompt, project.prompt),
         ),
     )
 
@@ -342,6 +397,8 @@ def load_config(path: str | Path) -> Config:
     gitlab = _load_gitlab(data["gitlab"]) if data.get("gitlab") is not None else None
     storage = _load_storage(data.get("storage"))
     usage = _load_usage(data.get("usage"))
+    # Built-in defaults <- global section; projects merge on top of this.
+    prompt = merge_prompt(PromptSettings(), _load_prompt(data.get("prompt"), "prompt"))
 
     return Config(
         provider=provider,
@@ -352,13 +409,70 @@ def load_config(path: str | Path) -> Config:
         gitlab=gitlab,
         storage=storage,
         usage=usage,
+        prompt=prompt,
     )
 
 
+def _absolute(path: str) -> str:
+    """A configured file path made absolute once, at load time.
+
+    Relative paths still mean "from the process's current folder", but the
+    harness works inside the worktree, so it must never see a relative one.
+    """
+    return os.path.abspath(path)
+
+
 def _skills_list(value: Any, field: str) -> list[str]:
-    if not isinstance(value, list) or not all(isinstance(s, str) for s in value):
+    if not isinstance(value, list) or not all(isinstance(s, str) and s for s in value):
         raise ConfigError(f"'{field}' must be a list of file paths")
-    return value
+    return [_absolute(s) for s in value]
+
+
+_PROMPT_KEYS = ("template", "instruction_files", "docs_dirs")
+
+
+def _load_prompt(prompt_data: Any, section: str) -> PromptOverrides | None:
+    """A `prompt` section (global or a project's) as per-key overrides.
+
+    Unknown keys are rejected: a typo would otherwise silently fall back
+    to the default prompt settings.
+    """
+    if prompt_data is None:
+        return None
+    if not isinstance(prompt_data, dict):
+        raise ConfigError(f"'{section}' must be a mapping")
+    unknown = sorted(str(key) for key in set(prompt_data) - set(_PROMPT_KEYS))
+    if unknown:
+        raise ConfigError(
+            f"'{section}' has unknown keys: {', '.join(unknown)} "
+            f"(expected: {', '.join(_PROMPT_KEYS)})"
+        )
+    template: str | None = None
+    if "template" in prompt_data:
+        value = prompt_data["template"]
+        if value is None or value == BUILTIN_TEMPLATE:
+            template = BUILTIN_TEMPLATE
+        elif isinstance(value, str) and value:
+            template = _absolute(value)
+        else:
+            raise ConfigError(
+                f"'{section}.template' must be a file path or null (the built-in template)"
+            )
+    lists: dict[str, list[str] | None] = {}
+    for key in ("instruction_files", "docs_dirs"):
+        value = prompt_data.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(v, str) and v for v in value)
+        ):
+            raise ConfigError(
+                f"'{section}.{key}' must be a list of paths relative to the repository root"
+            )
+        lists[key] = value
+    return PromptOverrides(
+        template=template,
+        instruction_files=lists["instruction_files"],
+        docs_dirs=lists["docs_dirs"],
+    )
 
 
 def _positive_int(value: Any, field: str) -> int:
@@ -530,6 +644,7 @@ def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
         project_skills = project_data.get("skills")
         if project_skills is not None:
             project_skills = _skills_list(project_skills, f"{section}.skills")
+        project_prompt = _load_prompt(project_data.get("prompt"), f"{section}.prompt")
         if enabled and not (project_reviewers if project_reviewers is not None else reviewers):
             raise ConfigError(
                 f"'{section}' ({path}) has no reviewers: set 'reviewers' for this "
@@ -545,6 +660,7 @@ def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
                 review_drafts=project_drafts,
                 provider=project_provider,
                 skills=project_skills,
+                prompt=project_prompt,
             )
         )
 

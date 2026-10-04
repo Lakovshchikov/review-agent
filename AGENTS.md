@@ -82,7 +82,12 @@ agentic-харнесс с подключаемым провайдером мод
   проверять: correctness/readability/testability/security/SRP/
   контракты/best practices; SEV Blocker/Major/Minor; допустимы находки
   с неполной уверенностью) идёт ОДНИМ прямым user-prompt'ом на каждый
-  запуск (`prompt.py`), не системным конфигом харнесса.
+  запуск, не системным конфигом харнесса. Текст промпта живёт в
+  Jinja2-шаблоне, не в Python: встроенный `prompts/default.md.j2` —
+  проверенный baseline (совпадение до символа закреплено golden-тестом),
+  проект может указать свой файл шаблона в конфиге (`prompt.template`,
+  только путь, не текст). Шаблон никогда не берётся из ревьюируемого
+  репозитория.
 - **Опциональный knowledge-skill слой** — только подсказка («вот
   паттерны, которые стоит иметь в виду»), НЕ ограничение исследования.
   Toggle per-run (0 или несколько skill-файлов, в т.ч. на проект) — для
@@ -90,9 +95,10 @@ agentic-харнесс с подключаемым провайдером мод
 - **Подготовка контекста — минимальная.** Агент получает только: путь к
   worktree, base/head SHA, title+description MR, путь (не содержимое) к
   `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` целевого
-  репозитория (первый найденный; не найдено — едем дальше без ошибки) и
-  к `docs/`, если есть. НЕ готовим diff.patch, группировку файлов,
-  risk-zones, dependency-impact — агент строит это сам. Любые данные,
+  репозитория (первый найденный; не найдено — едем дальше без ошибки;
+  списки кандидатов настраиваются — `prompt.instruction_files`,
+  `prompt.docs_dirs`) и к `docs/`, если есть. НЕ готовим diff.patch,
+  группировку файлов, risk-zones, dependency-impact — агент строит это сам. Любые данные,
   которые оркестратор считает о MR (размер изменения и т.п.), агенту не
   передаются. Постобработка отчёта (ссылки на файлы) — детерминированная,
   промпт ради неё не меняется.
@@ -162,6 +168,7 @@ change пропозится только после `apply` и ручной пр
 | 5 | `review-usage-accounting` | журнал расхода, замер квоты в интерактиве, `review-agent usage` | `archive/2026-10-04-review-usage-accounting` |
 | 6 | `gitlab-file-links` | ссылки на файлы в отчёте ведут на GitLab в отревьюенном коммите | `archive/2026-10-04-gitlab-file-links` |
 | 7 | `restructure-documentation` | README как справочник, `docs/`, карта репозитория и правило актуализации документации (п.10–11) | `archive/2026-10-04-restructure-documentation` |
+| 8 | `configurable-review-prompt` | промпт — Jinja2-шаблон (встроенный = baseline), `prompt` в конфиге с переопределением проекта по ключам, проверка шаблонов перед работой, `prompt-check` | `archive/2026-10-04-configurable-review-prompt` |
 
 Пути архивов — относительно `openspec/changes/`.
 
@@ -178,11 +185,22 @@ change пропозится только после `apply` и ручной пр
 - self-generating best-practices ruleset из истории ревью+фидбека;
 - ревью на новый diff после правок (повторный прогон той же MR);
 - backend/другие стеки помимо frontend;
-- `skills` с относительными путями: путь передаётся агенту как есть, а
-  агент работает из worktree — относительный путь не находится
-  (сейчас в документации требуются абсолютные пути); `provider.api_key_env`
-  и `safety.output_language` движком фактически не используются —
-  решить, убрать или задействовать;
+- **баг: knowledge-skills не доходят до агента.** Skill-файлы лежат вне
+  worktree, OpenCode 2.0.21 требует для их чтения разрешение
+  `external_directory`, а в неинтерактивном прогоне запрос отклоняется
+  (`auto-rejecting`, `Read … failed` в `harness-stderr.log`). Так было с
+  change 1: путь в промпте есть, содержимого у агента нет — ни одно ревью
+  со skill'ами их на деле не использовало. Найдено при живой проверке
+  `configurable-review-prompt` (его `validation-notes.md`). Кандидаты
+  исправления: `permission.external_directory` с шаблонами папок skill'ов
+  в `opencode.json` (схема 2.0.21 это допускает, вживую не проверено) или
+  копия skill-файлов в worktree. Отдельной задачей — пересмотреть сам
+  подход к skill'ам (что это, как подаются агенту, нужны ли), а не только
+  починить чтение. Пути `skills` при загрузке конфига уже абсолютные;
+- `provider.api_key_env` и `safety.output_language` движком фактически не
+  используются — решить, убрать или задействовать;
+- `safety.denied_bash_patterns` не переопределяется на проект: для
+  бэкенд-стеков (`mvn`, `gradle`, `dotnet`, `go`…) нужен свой denylist;
 - автоматический замер % лимитов подписки по каждому ревью (сейчас —
   ввод остатка в интерактивном прогоне): прямой `wham/usage` с
   OAuth-токеном OpenCode v2 не работает (401: свой OAuth-клиент, account
@@ -223,6 +241,7 @@ review-agent poll --help    # проход опроса GitLab
 review-agent poll --dry-run # первый безопасный прогон на реальном GitLab
 review-agent poll --all --debug   # проход без вопросов, артефакты прогонов — в <work_dir>/debug/
 review-agent usage                # сводка расхода (--by model, --wide, --format csv)
+review-agent prompt-check --show  # проверка шаблонов промпта и предпросмотр (0/1/2)
 ```
 
 ```powershell
@@ -245,6 +264,7 @@ tests/                   pytest: test_<модуль>.py, test_register_script.py
   conftest.py            временные git-репозитории для тестов
   fixtures/opencode/     реальный экспорт сессии OpenCode (разбор токенов)
   fixtures/file_links/   отчёты с путями (переписывание ссылок)
+src/review_agent/prompts/  встроенный шаблон промпта (package data)
 scripts/register-task.ps1  регистрация задачи Task Scheduler
 docs/                    документация для пользователя (см. ниже)
 openspec/specs/          действующие спецификации по capability
@@ -258,11 +278,13 @@ README.md                справочник пользователя: уста
 
 | Модуль | Ответственность |
 | --- | --- |
-| `cli.py` | точки входа `review-agent`, `poll`, `usage`; ручной режим |
+| `cli.py` | точки входа `review-agent`, `poll`, `usage`, `prompt-check`; ручной режим |
 | `config.py` | загрузка и проверка конфига, значения по умолчанию, настройки проекта |
 | `pipeline.py` | движок одного ревью: worktree → промпт → `opencode.json` → харнесс → учёт → уборка |
 | `worktree.py` | изолированный `git worktree`, гарантированное удаление, сироты |
-| `prompt.py` | промпт ревью (единственное место методологии), поиск инструкций целевого репо |
+| `prompt.py` | рендер промпта из Jinja2-шаблона, поиск инструкций и docs целевого репо по спискам-кандидатам |
+| `prompts/default.md.j2` | встроенный шаблон промпта (единственное место методологии по умолчанию) |
+| `prompt_check.py` | проверка шаблонов промпта, общий шаг «проверить перед работой» |
 | `harness_config.py` | `opencode.json` с read-only агентом, safety-note |
 | `harness.py` | вызов харнесса подпроцессом |
 | `report.py` | отчёт ручного режима в файл |
@@ -288,6 +310,7 @@ README.md                справочник пользователя: уста
 | Capability | Модули |
 | --- | --- |
 | `mr-review-engine` | `pipeline.py`, `worktree.py`, `prompt.py`, `harness.py`, `harness_config.py`, `report.py` |
+| `review-prompt-templates` | `prompt.py`, `prompts/default.md.j2`, `prompt_check.py`, `cli.py`, `polling.py` |
 | `mr-discovery` | `polling.py`, `gitlab.py` |
 | `review-polling-run` | `polling.py`, `passlog.py`, `lock.py`, `cli.py` |
 | `review-publishing` | `publishing.py`, `file_links.py`, `gitlab.py`, `polling.py` |
@@ -303,6 +326,7 @@ README.md                справочник пользователя: уста
 | Файл | Что там |
 | --- | --- |
 | `docs/configuration.md` | каждый ключ конфига: тип, default, смысл; переопределения проекта |
+| `docs/prompt.md` | шаблоны промпта: переменные, блоки, свой шаблон, проверка, `prompt-check` |
 | `docs/polling.md` | проход `poll`: шаги, режимы, маркер, claim, lock, кэш, ссылки, лог |
 | `docs/work-dir.md` | раскладка рабочей папки, что и когда удаляется |
 | `docs/scheduling.md` | Task Scheduler: регистрация, параметры, мониторинг, коды результата |

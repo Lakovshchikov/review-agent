@@ -26,7 +26,7 @@ review-agent poll ──glab──► GitLab: MR на ревьюера → claim
 из `scripts/register-task.ps1`). Сам review-agent — один проход на вызов.
 
 **Документация:** [конфигурация](docs/configuration.md) ·
-[опрос GitLab](docs/polling.md) · [рабочая папка](docs/work-dir.md) ·
+[промпт ревью](docs/prompt.md) · [опрос GitLab](docs/polling.md) · [рабочая папка](docs/work-dir.md) ·
 [расписание](docs/scheduling.md) · [учёт расхода](docs/usage-accounting.md) ·
 [как устроено](docs/architecture.md) · [технические решения](docs/decisions.md) ·
 [если что-то пошло не так](docs/troubleshooting.md) ·
@@ -36,7 +36,7 @@ review-agent poll ──glab──► GitLab: MR на ревьюера → claim
 
 | Что | Зачем | Проверено на |
 | --- | --- | --- |
-| Python 3.10+ | сам review-agent (зависимость пакета — только PyYAML) | 3.10 |
+| Python 3.10+ | сам review-agent (зависимости пакета — PyYAML и Jinja2) | 3.10 |
 | `git` | worktree, клоны | Git for Windows 2.49 |
 | [OpenCode](https://opencode.ai) | агентный харнесс, вызывается как внешний процесс | 2.0.21 |
 | [`glab`](https://gitlab.com/gitlab-org/cli) | GitLab API и авторизация git (только для `poll`); нужен `glab auth git-credential` | 1.115.0 |
@@ -130,6 +130,27 @@ review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr
 — перенаправлением (`--format csv > usage.csv`). Подробно —
 [docs/usage-accounting.md](docs/usage-accounting.md).
 
+### `review-agent prompt-check` — проверка шаблонов промпта
+
+```bash
+review-agent prompt-check [--project PATH | --template FILE] [--show] [--config config.yaml]
+```
+
+| Флаг | Что делает |
+| --- | --- |
+| (без флагов) | глобальные настройки и итоговые настройки каждого проекта, включая выключенные |
+| `--project PATH` | только итоговые настройки проекта `group/project` |
+| `--template FILE` | отдельный файл шаблона без проектов (конфиг не обязателен) |
+| `--show` | напечатать промпт, отрендеренный с тестовыми значениями |
+| `--config PATH` | конфиг, по умолчанию `config.yaml` |
+
+Ошибки (файла нет, синтаксис Jinja2, неизвестная переменная) и
+предупреждения (шаблон не использует переменную, нет файла skill) выводятся
+все сразу. Коды выхода: `0` — чисто, `1` — только предупреждения, `2` —
+ошибки. Та же проверка идёт в начале `poll` и ручного режима: при ошибке
+работа не начинается, при предупреждениях в консоли задаётся один вопрос, а
+в `poll --all` они только пишутся в лог. Подробно — [docs/prompt.md](docs/prompt.md).
+
 ### `scripts/register-task.ps1` — задача Task Scheduler (Windows)
 
 | Параметр | По умолчанию | Смысл |
@@ -156,7 +177,9 @@ review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr
 | --- | --- | --- |
 | `0` | всё опубликовано / пропущено / нечего ревьюить / выбор отменён | отчёт записан |
 | `1` | хотя бы один MR или проект упал (проход дошёл до конца) | ревью упало (ошибка с трассировкой) |
-| `2` | ничего не запускалось: конфиг, `glab`, GitLab недоступен, другой прогон идёт, нет консоли без `--all` | ошибка конфига, другой прогон идёт |
+| `2` | ничего не запускалось: конфиг, ошибка шаблона промпта или отказ продолжить с его предупреждениями, `glab`, GitLab недоступен, другой прогон идёт, нет консоли без `--all` | ошибка конфига или шаблона промпта, отказ продолжить с предупреждениями, другой прогон идёт |
+
+Коды `prompt-check` — в его разделе выше.
 
 ## Конфигурация
 
@@ -181,7 +204,12 @@ harness:                          # вызов OpenCode (обяз.)
 report:
   output_path: ./reports/review-{run_id}.md   # обяз.; отчёт ручного режима, {run_id} подставляется
 
-skills: []                        # = []; АБСОЛЮТНЫЕ пути к knowledge-skill файлам (подсказки, не ограничения)
+skills: []                        # = []; пути к knowledge-skill файлам (подсказки, не ограничения); становятся абсолютными
+
+prompt:                           # промпт ревью; в конфиге только пути, не текст — docs/prompt.md
+  template: null                  # = null (встроенный builtin/default.md.j2); путь к своему Jinja2-шаблону
+  instruction_files: [AGENTS.md, CLAUDE.md, .github/copilot-instructions.md]   # = это значение; в репо MR, берётся первый найденный
+  docs_dirs: [docs, documentation]   # = это значение; папка документации в репо MR, первая найденная
 
 safety:
   denied_bash_patterns: ["npm *", "rm *", "*test*"]   # = список из config.example.yaml; запрещённые агенту команды, заменяет список целиком
@@ -219,6 +247,8 @@ gitlab:                           # только для poll
       review_drafts: true
       provider: {name: openai, model: gpt-5, reasoning_effort: high}   # весь блок, со своим reasoning_effort
       skills: []                  # [] — без skill'ов при непустом глобальном списке
+      prompt:                     # а этот блок — ПО КЛЮЧАМ: незаданные ключи берутся из глобального prompt
+        template: ./prompts/backend.md.j2
 ```
 
 ## Рабочая папка

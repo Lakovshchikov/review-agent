@@ -203,3 +203,12 @@ def test_whole_ledger_when_no_since():
     s = summarize(records, prices=book, since=None, until=None, configured_windows=["week"])
     assert len(s.rows) == 2
     assert "Период: всё время" in render(s, "review", "table")
+
+
+def test_records_with_and_without_prompt_fields_mix():
+    old = rec("r-old")
+    new = {**rec("r-new"), "review.prompt.template": "builtin/default.md.j2", "review.prompt.sha256": "ab" * 32}
+    summary = _summary([old, new])
+    assert {r.record["review.run_id"] for r in summary.rows} == {"r-old", "r-new"}
+    for fmt in ("table", "csv", "json"):
+        assert render(summary, "review", fmt, wide=True)

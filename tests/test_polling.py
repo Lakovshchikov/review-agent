@@ -905,7 +905,7 @@ def test_project_settings_reach_discovery_engine_and_comment(setup):
         ("b2c/other", ["other-bot"], True),
     ]
     by_head = {k["head_sha"]: k["config"] for k in recorder.reviews}
-    assert by_head["1" * 40].provider.name == "openai" and by_head["1" * 40].skills == ["global.md"]
+    assert by_head["1" * 40].provider.name == "openai" and by_head["1" * 40].skills == [os.path.abspath("global.md")]
     assert by_head["2" * 40].provider.name == "anthropic" and by_head["2" * 40].skills == []
     bodies = {i: b for _, i, b in gitlab.published}
     assert "openai/gpt#medium" in bodies[1]
@@ -1421,3 +1421,113 @@ def test_project_provider_is_used_for_quota_label(setup):
     assert _poll(setup, gitlab, recorder, answers=["1"], output=output) == EXIT_OK
     assert recorder.reviews[0]["config"].provider.name == "anthropic"
     assert any("Замер квоты anthropic" in line for line in output)
+
+
+# -- prompt templates checked before any work (configurable-review-prompt) ------
+
+
+def _with_templates(setup, **templates):
+    """Give projects their own template files: templates={'front': text, 'other': text}."""
+    paths = {}
+    for key, text in templates.items():
+        path = setup["tmp"] / f"{key}.md.j2"
+        path.write_text(text, encoding="utf-8")
+        paths[key] = str(path)
+
+    def change(cfg):
+        for project in cfg["gitlab"]["projects"]:
+            key = project["path"].split("/")[1]
+            if key in paths:
+                project["prompt"] = {"template": paths[key]}
+
+    _edit_config(setup, change)
+    return paths
+
+
+_ALL_BUT_BASE = (
+    '{% extends "builtin/default.md.j2" %}{% block task %}Ревью в {{ worktree_path }}.{% endblock %}'
+)
+_ALL_BUT_TITLE = (
+    '{% extends "builtin/default.md.j2" %}{% block mr_context %}{{ mr_description }}{% endblock %}'
+)
+
+
+def _pass_log_text(setup):
+    return "\n".join(p.read_text(encoding="utf-8") for p in _pass_logs(setup))
+
+
+def test_template_error_stops_the_pass_before_gitlab(setup, capsys):
+    _with_templates(setup, other="{{ base_shaa }} {{ mr_titel }}")
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one")})
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_NOT_STARTED
+
+    assert not hasattr(gitlab, "hostname")  # the client was never even created
+    assert recorder.reviews == [] and gitlab.calls == []
+    err = capsys.readouterr().err
+    assert "base_shaa" in err and "mr_titel" in err and "b2c/other" in err
+    assert not (setup["work"] / "poll.lock").exists()
+
+
+def test_interactive_warnings_ask_once_and_refusal_does_nothing(setup):
+    _with_templates(setup, front=_ALL_BUT_BASE, other=_ALL_BUT_TITLE)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one")})
+    out = []
+
+    assert _poll(setup, gitlab, Recorder(), answers=["n"], output=out) == EXIT_NOT_STARTED
+
+    questions = [line for line in out if "Продолжить" in line]
+    assert len(questions) == 1
+    shown = "\n".join(out)
+    assert "base_sha" in shown and "mr_title" in shown
+    assert not hasattr(gitlab, "hostname")
+
+
+def test_interactive_warnings_accepted_continue_to_mr_choice(setup):
+    _with_templates(setup, front=_ALL_BUT_BASE)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one")})
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, answers=["y", "1"]) == EXIT_OK
+    assert len(recorder.reviews) == 1
+
+
+def test_all_mode_warnings_go_to_the_log_and_the_pass_continues(setup):
+    _with_templates(setup, front=_ALL_BUT_BASE)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one")})
+    out = []
+
+    assert _poll(setup, gitlab, Recorder(), review_all=True, output=out) == EXIT_OK
+
+    assert not any("Продолжить" in line for line in out)
+    assert out[0].startswith("Проверка шаблонов промпта:")  # no extra prefix
+    assert "    WARNING шаблон не использует переменную base_sha" in out[0]
+    assert len(gitlab.published) == 1
+    log = _pass_log_text(setup)
+    assert "WARNING" in log and "base_sha" in log
+
+
+def test_disabled_project_with_broken_template_is_ignored(setup):
+    def change(cfg):
+        cfg["gitlab"]["projects"][1]["enabled"] = False
+        cfg["gitlab"]["projects"][1]["prompt"] = {"template": str(setup["tmp"] / "absent.md.j2")}
+
+    _edit_config(setup, change)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one")})
+    out = []
+
+    assert _poll(setup, gitlab, Recorder(), review_all=True, output=out) == EXIT_OK
+    assert "absent.md.j2" not in "\n".join(out)
+    assert len(gitlab.published) == 1
+
+
+def test_project_template_reaches_the_engine(setup):
+    paths = _with_templates(setup, other=_ALL_BUT_BASE.replace("{{ worktree_path }}", "{{ worktree_path }} {{ base_sha }}"))
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one"), ("b2c/other", 2): _mr("two")})
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_OK
+
+    by_project = {r["config"].prompt.template: r for r in recorder.reviews}
+    assert set(by_project) == {None, paths["other"]}

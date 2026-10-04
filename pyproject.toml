@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Autonomous agentic code-review engine for GitLab merge requests"
 requires-python = ">=3.10"
 dependencies = [
+    "Jinja2>=3.1",
     "PyYAML>=6.0",
 ]
 
@@ -21,6 +22,9 @@ review-agent = "review_agent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+review_agent = ["prompts/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

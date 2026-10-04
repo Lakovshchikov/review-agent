@@ -79,8 +79,11 @@ def run_review(
         with managed_worktree(repo_path, base_sha, head_sha, tmp_dir) as handle:
             run_dir = handle.path.parent
 
-            repo_instructions_path = discover_repo_instructions_path(handle.path)
-            docs_path = discover_docs_path(handle.path)
+            prompt_settings = config.prompt
+            repo_instructions_path = discover_repo_instructions_path(
+                handle.path, prompt_settings.instruction_files
+            )
+            docs_path = discover_docs_path(handle.path, prompt_settings.docs_dirs)
             skill_paths = [Path(p) for p in config.skills]
 
             prompt_text = render_review_prompt(
@@ -91,6 +94,7 @@ def run_review(
                 repo_instructions_path=repo_instructions_path,
                 docs_path=docs_path,
                 skill_paths=skill_paths,
+                template=prompt_settings.template,
             )
             prompt_file = run_dir / "prompt.md"
             prompt_file.write_text(prompt_text, encoding="utf-8")
@@ -146,6 +150,7 @@ def run_review(
                         head_sha=head_sha,
                         provider=config.provider,
                         skills=config.skills,
+                        prompt_template=prompt_settings.template,
                         outcome=outcome,
                         duration_ms=duration_ms,
                         report=report,

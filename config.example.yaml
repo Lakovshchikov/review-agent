@@ -35,8 +35,22 @@ report:
   # Отчёт ручного режима (`review-agent --repo ...`); {run_id} подставляется.
   output_path: "./reports/review-{run_id}.md"
 
-# Knowledge-skill файлы — подсказки агенту, не ограничение. Только абсолютные пути.
+# Knowledge-skill файлы — подсказки агенту, не ограничение. Относительные пути
+# считаются от текущей папки и при загрузке становятся абсолютными.
+# Известное ограничение: сейчас агент не может прочитать skill-файл
+# (OpenCode отклоняет чтение вне worktree) — docs/configuration.md#skills.
 skills: []
+
+# Промпт ревью (секция необязательна; ниже — значения по умолчанию).
+# В конфиге только путь к файлу шаблона, не текст. Как писать шаблон и
+# проверять его (`review-agent prompt-check`) — docs/prompt.md.
+prompt:
+  # Jinja2-шаблон промпта; null — встроенный builtin/default.md.j2 (проверенный baseline).
+  template: null
+  # Файлы инструкций и папки документации ВНУТРИ ревьюируемого репозитория:
+  # агенту передаётся путь к первому найденному, не содержимое. [] — не искать.
+  instruction_files: [AGENTS.md, CLAUDE.md, .github/copilot-instructions.md]
+  docs_dirs: [docs, documentation]
 
 safety:
   # Пишется только в safety-note прогона; язык отчёта задан в промпте (русский).
@@ -113,8 +127,9 @@ gitlab:
     - path: b2c/front-tools
       local_repo: C:/repos/front-tools
       remote: origin                     # по умолчанию origin; только вместе с local_repo
-    # Переопределения проекта: enabled, reviewers, review_drafts, provider, skills.
-    # Заменяют глобальное значение целиком (provider — весь блок со своим reasoning_effort).
+    # Переопределения проекта: enabled, reviewers, review_drafts, provider, skills, prompt.
+    # Заменяют глобальное значение целиком (provider — весь блок со своим reasoning_effort);
+    # prompt — по ключам: незаданные ключи берутся из глобальной секции prompt.
     - path: b2c/front-checkout
       local_repo: C:/repos/front-checkout
       reviewers: [ai-reviewer, checkout-lead]
@@ -123,6 +138,11 @@ gitlab:
         model: gpt-5
         reasoning_effort: high
       skills: []
+    # Бэкенд-проект со своим шаблоном промпта (instruction_files/docs_dirs — глобальные).
+    # Файл должен существовать: иначе poll не стартует (проверка — review-agent prompt-check).
+    - path: b2c/payments-api
+      prompt:
+        template: ./prompts/backend-java.md.j2
     # Выключенный проект не опрашивается и не считается сбоем.
     - path: b2c/legacy-admin
       local_repo: C:/repos/legacy-admin
