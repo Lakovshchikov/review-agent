@@ -280,3 +280,14 @@ def test_version_comes_from_the_harness_not_the_list_command(tmp_path):
     source = make_usage_source(load_config(cfg))
     assert source.version_command == ["opencode", "--version"]
     assert source.list_command == ["python", "wrapper.py"]
+
+
+def test_usage_commands_never_inherit_stdin(tmp_path):
+    seen = []
+
+    def runner(argv, **kwargs):
+        seen.append(kwargs.get("stdin"))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    source(runner).collect(tmp_path)
+    assert seen and all(s is subprocess.DEVNULL for s in seen)

@@ -216,6 +216,7 @@ class OpenCodeUsageSource:
             encoding="utf-8",
             errors="replace",
             cwd=str(cwd),
+            stdin=subprocess.DEVNULL,  # see harness.py: opencode waits on an open stdin
             timeout=COMMAND_TIMEOUT_SECONDS,
             creationflags=no_window_flags(),
         )

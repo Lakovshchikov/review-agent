@@ -158,3 +158,19 @@ def test_invoke_harness_survives_non_utf8_output(tmp_path):
     )
     assert result.stdout == "ок \ufffd end"
     assert result.stderr == "err \ufffd"
+
+
+def test_harness_never_inherits_stdin():
+    """`opencode run` waits for EOF on a non-console stdin - verified live:
+    started from a shell with an open stdin pipe, it hung without ever
+    starting a session. The harness must always get an empty stdin."""
+    stub = _StubRunner()
+    invoke_harness(
+        HarnessConfig(command=["not-a-real-harness-binary", "{prompt_file}"]),
+        ProviderConfig(name="p", model="m", reasoning_effort=None),
+        prompt="x",
+        prompt_file=Path("p.md"),
+        worktree_path=Path("wt"),
+        runner=stub,
+    )
+    assert stub.calls[0]["kwargs"]["stdin"] is subprocess.DEVNULL

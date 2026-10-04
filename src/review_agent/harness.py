@@ -153,6 +153,12 @@ def invoke_harness(
         errors="replace",
         cwd=str(worktree_path),
         env=env,
+        # Never inherit stdin: `opencode run` reads extra input from a
+        # non-console stdin and waits for its EOF - verified live: started
+        # from a shell whose stdin is an open pipe (as in CI), the run hung
+        # for 20+ minutes without ever creating a session. A console or
+        # `< NUL` (Task Scheduler) hid this.
+        stdin=subprocess.DEVNULL,
         # No console of our own (pythonw under Task Scheduler) -> keep
         # opencode from popping up a window; see proc.py.
         creationflags=no_window_flags(),
