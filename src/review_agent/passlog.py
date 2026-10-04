@@ -52,9 +52,10 @@ class PassLog:
         self._logger.info(message)
         _safe(self._output_fn, message)
 
-    def warning(self, message: str) -> None:
+    def warning(self, message: str, *, prefix: bool = True) -> None:
+        """`prefix=False` for messages that already mark their level themselves."""
         self._logger.warning(message)
-        _safe(self._output_fn, f"Предупреждение: {message}")
+        _safe(self._output_fn, f"Предупреждение: {message}" if prefix else message)
 
     def error(self, message: str) -> None:
         self._logger.error(message)

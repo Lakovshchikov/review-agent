@@ -34,6 +34,7 @@ generative AI) плюс собственные `review.*`. Каждый ключ
 | `review.run_id`, `review.source` | какой прогон; `poll` или `manual` |
 | `review.project`, `review.mr.iid`, `review.base_sha`, `review.head_sha` | что ревьюилось |
 | `gen_ai.provider.name`, `gen_ai.request.model`, `review.reasoning_effort`, `review.skills` | конфиг прогона (у skill'ов — только имена файлов) |
+| `review.prompt.template`, `review.prompt.sha256` | шаблон промпта: путь к файлу или `builtin/default.md.j2`, и sha256 содержимого этого файла (при `extends`/`include` — только самого файла, без родителя); `null` в хэше — файл не прочитался. В записях, сделанных до появления шаблонов, полей нет |
 | `review.harness.name`, `review.harness.version` | харнесс и его версия |
 | `review.outcome`, `review.duration_ms` | `succeeded` / `failed` / `interrupted`, общее время |
 | `gen_ai.usage.input_tokens` | **весь** вход, включая кэш (как в OTel) |

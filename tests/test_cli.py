@@ -371,3 +371,180 @@ def test_usage_defaults_to_the_whole_ledger_and_compact_table(tmp_path, capsys):
     assert "tokens_k" in out and "fresh_input" not in out
     assert cli.usage_main(["--config", str(_manual_config(tmp_path)), "--wide"], fetch=lambda url: PRICES) == 0
     assert "fresh_input" in capsys.readouterr().out
+
+
+# -- prompt template check in the manual mode (configurable-review-prompt) ------
+
+
+def _manual_config_with_template(tmp_path, text):
+    import yaml
+
+    config = _manual_config(tmp_path)
+    template = tmp_path / "own.md.j2"
+    template.write_text(text, encoding="utf-8")
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data["prompt"] = {"template": str(template)}
+    config.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return config
+
+
+_UNUSED_BASE = '{% extends "builtin/default.md.j2" %}{% block task %}Ревью в {{ worktree_path }}.{% endblock %}'
+
+
+def test_manual_template_error_stops_before_worktree(git_repo_with_base_and_head, tmp_path, monkeypatch, capsys):
+    from review_agent import cli, polling
+
+    _stub_harness(monkeypatch)
+    monkeypatch.setattr(polling, "stdin_is_interactive", lambda stream=None: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("no question on errors"))
+    config = _manual_config_with_template(tmp_path, "{{ nope }} {{ other }}")
+
+    assert cli.main(_manual_args(git_repo_with_base_and_head, config)) == 2
+    err = capsys.readouterr().err
+    assert "nope" in err and "other" in err
+    assert not (tmp_path / "work" / "tmp").exists()
+    assert not (tmp_path / "reports").exists()
+
+
+def test_manual_warnings_asked_on_a_console_and_refused(git_repo_with_base_and_head, tmp_path, monkeypatch, capsys):
+    from review_agent import cli, polling
+
+    _stub_harness(monkeypatch)
+    monkeypatch.setattr(polling, "stdin_is_interactive", lambda stream=None: True)
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": asked.append(prompt) or "n")
+    config = _manual_config_with_template(tmp_path, _UNUSED_BASE)
+
+    assert cli.main(_manual_args(git_repo_with_base_and_head, config)) == 2
+    assert len(asked) == 1 and "Продолжить" in asked[0]
+    assert "base_sha" in capsys.readouterr().err
+    assert not (tmp_path / "reports").exists()
+
+
+def test_manual_warnings_without_console_continue(git_repo_with_base_and_head, tmp_path, monkeypatch, capsys):
+    from review_agent import cli, polling
+
+    _stub_harness(monkeypatch)
+    monkeypatch.setattr(polling, "stdin_is_interactive", lambda stream=None: False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("no questions without a console"))
+    config = _manual_config_with_template(tmp_path, _UNUSED_BASE)
+
+    assert cli.main(_manual_args(git_repo_with_base_and_head, config)) == 0
+    err = capsys.readouterr().err
+    assert "WARNING шаблон не использует переменную base_sha" in err
+    assert "Предупреждение: Проверка" not in err
+    assert len(list((tmp_path / "reports").glob("review-*.md"))) == 1
+
+
+# -- review-agent prompt-check ------------------------------------------------------
+
+
+def _check_config(tmp_path, *, global_template=None, projects=()):
+    import yaml
+
+    data = {
+        "provider": {"name": "p", "model": "m", "reasoning_effort": None},
+        "harness": {"command": ["stub"]},
+        "report": {"output_path": "r-{run_id}.md"},
+    }
+    if global_template:
+        data["prompt"] = {"template": global_template}
+    if projects:
+        data["gitlab"] = {"hostname": "h", "reviewers": ["bot"], "projects": list(projects)}
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return str(path)
+
+
+def _tpl(tmp_path, name, text):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_prompt_check_clean_config_exits_zero(tmp_path, capsys):
+    from review_agent import cli
+
+    config = _check_config(tmp_path, projects=[{"path": "a/b"}])
+    assert cli.main(["prompt-check", "--config", config]) == 0
+    out = capsys.readouterr().out
+    assert "builtin/default.md.j2" in out and "глобальные настройки, a/b" in out and "OK" in out
+
+
+def test_prompt_check_warnings_only_exits_one(tmp_path, capsys):
+    from review_agent import cli
+
+    unused = _tpl(tmp_path, "u.md.j2", '{% extends "builtin/default.md.j2" %}{% block mr_context %}{% endblock %}')
+    config = _check_config(tmp_path, projects=[{"path": "a/b", "prompt": {"template": unused}}])
+    assert cli.main(["prompt-check", "--config", config]) == 1
+    out = capsys.readouterr().out
+    assert "mr_title" in out and "mr_description" in out
+
+
+def test_prompt_check_errors_exit_two_and_include_disabled_projects(tmp_path, capsys):
+    from review_agent import cli
+
+    config = _check_config(
+        tmp_path,
+        projects=[
+            {"path": "a/b"},
+            {"path": "c/d", "enabled": False, "prompt": {"template": str(tmp_path / "absent.md.j2")}},
+        ],
+    )
+    assert cli.main(["prompt-check", "--config", config]) == 2
+    out = capsys.readouterr().out
+    assert "c/d (выключен)" in out and "absent.md.j2" in out
+
+
+def test_prompt_check_one_project(tmp_path, capsys):
+    from review_agent import cli
+
+    broken = _tpl(tmp_path, "b.md.j2", "{{ nope }}")
+    config = _check_config(
+        tmp_path, global_template=broken, projects=[{"path": "a/b", "prompt": {"template": None}}]
+    )
+    assert cli.main(["prompt-check", "--config", config, "--project", "a/b"]) == 0
+    assert "b.md.j2" not in capsys.readouterr().out
+
+
+def test_prompt_check_unknown_project(tmp_path, capsys):
+    from review_agent import cli
+
+    config = _check_config(tmp_path, projects=[{"path": "a/b"}])
+    assert cli.main(["prompt-check", "--config", config, "--project", "x/y"]) == 2
+    assert "x/y" in capsys.readouterr().err
+
+
+def test_prompt_check_lone_template_without_config(tmp_path, capsys):
+    from review_agent import cli
+
+    child = _tpl(
+        tmp_path, "child.md.j2", '{% extends "builtin/default.md.j2" %}{% block checklist %}Своё.{% endblock %}'
+    )
+    assert cli.main(["prompt-check", "--template", child, "--config", str(tmp_path / "absent.yaml")]) == 0
+    captured = capsys.readouterr()
+    assert "OK" in captured.out and "Конфиг не загружен" in captured.err
+
+
+def test_prompt_check_project_and_template_are_exclusive(tmp_path):
+    from review_agent import cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["prompt-check", "--project", "a/b", "--template", "t.md.j2"])
+
+
+def test_prompt_check_show_prints_the_rendered_prompt(tmp_path, capsys):
+    from review_agent import cli
+
+    config = _check_config(tmp_path)
+    assert cli.main(["prompt-check", "--config", config, "--show"]) == 0
+    out = capsys.readouterr().out
+    assert "----- builtin/default.md.j2 (глобальные настройки) -----" in out
+    assert "Role: Senior Software Engineer." in out and "Пример заголовка MR" in out
+
+
+def test_prompt_check_config_error_exits_two(tmp_path, capsys):
+    from review_agent import cli
+
+    assert cli.main(["prompt-check", "--config", str(tmp_path / "absent.yaml")]) == 2
+    assert "Ошибка конфигурации" in capsys.readouterr().err

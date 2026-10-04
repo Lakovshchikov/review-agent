@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from review_agent.cli import build_arg_parser, build_poll_arg_parser, build_usage_arg_parser
+from review_agent.cli import (
+    build_arg_parser,
+    build_poll_arg_parser,
+    build_prompt_check_arg_parser,
+    build_usage_arg_parser,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -41,7 +46,8 @@ def _readme() -> str:
 
 
 @pytest.mark.parametrize(
-    "parser_factory", [build_arg_parser, build_poll_arg_parser, build_usage_arg_parser]
+    "parser_factory",
+    [build_arg_parser, build_poll_arg_parser, build_usage_arg_parser, build_prompt_check_arg_parser],
 )
 def test_readme_mentions_every_cli_flag(parser_factory):
     readme = _readme()

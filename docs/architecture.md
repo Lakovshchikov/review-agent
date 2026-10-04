@@ -24,16 +24,21 @@
 1. Создаётся изолированный `git worktree` на head в
    `<work_dir>/tmp/<run_id>/worktree`. Репозиторий-источник не меняется.
    Если head не найден локально, движок пробует `git fetch <sha>`.
-2. В worktree ищутся инструкции целевого репозитория — первый найденный из
-   `AGENTS.md` → `CLAUDE.md` → `.github/copilot-instructions.md` — и папка
-   документации (`docs/` или `documentation/`). Агенту передаются только
-   **пути**, не содержимое.
-3. Рендерится промпт (`prompt.py`): роль, worktree, base SHA, title и
-   description MR, пути из п.2, пути к skill'ам, методология ревью (что
-   проверять, SEV Blocker/Major/Minor, допустимы находки с неполной
-   уверенностью, ничего не изменять и не запускать). Это единственное
-   место, где живёт методология. Заранее подготовленного diff, списка
+2. В worktree ищутся инструкции целевого репозитория — первый найденный
+   файл из `prompt.instruction_files` (по умолчанию `AGENTS.md` →
+   `CLAUDE.md` → `.github/copilot-instructions.md`) — и папка документации
+   из `prompt.docs_dirs` (`docs/` или `documentation/`). Агенту передаются
+   только **пути**, не содержимое.
+3. Рендерится промпт (`prompt.py`, Jinja2) из шаблона `prompt.template`
+   проекта или встроенного `src/review_agent/prompts/default.md.j2`.
+   Python передаёт шаблону только значения: worktree, base SHA, title и
+   description MR, пути из п.2, пути к skill'ам. Весь текст — роль,
+   методология ревью (что проверять, SEV Blocker/Major/Minor, допустимы
+   находки с неполной уверенностью, ничего не изменять и не запускать) и
+   формулировки секций — живёт в шаблоне. Шаблон берётся только из конфига
+   и пакета, никогда из worktree. Заранее подготовленного diff, списка
    файлов или карты рисков нет: агент строит это сам через `git`.
+   Подробно — [prompt.md](prompt.md).
 4. В корень worktree пишется `opencode.json` с агентом `harness.agent_name`
    (`harness_config.py`): `bash` — denylist из
    `safety.denied_bash_patterns`; `edit`, `webfetch`, `websearch` —
@@ -46,16 +51,18 @@
    становится отчётом, stderr сохраняется в `harness-stderr.log`.
 6. Собирается учёт расхода (`usage_source.py`, `review_stats.py`), и в
    `usage/ledger.jsonl` дописывается запись (`usage_ledger.py`) — при любом
-   исходе прогона.
+   исходе прогона, с путём и sha256 шаблона промпта.
 7. Вся `tmp/<run_id>/` удаляется — при успехе и при ошибке. С `--debug`
    файлы (кроме worktree) предварительно копируются в `debug/`.
 
-Ручной режим (`cli.py`) берёт `poll.lock`, выполняет движок и пишет отчёт
-в `report.output_path` (`report.py`).
+Ручной режим (`cli.py`) проверяет шаблон промпта глобальных настроек
+(`prompt_check.py`), берёт `poll.lock`, выполняет движок и пишет отчёт в
+`report.output_path` (`report.py`).
 
 ## Проход poll
 
-`polling.py` оркестрирует: лог прохода (`passlog.py`) → lock (`lock.py`) →
+`polling.py` оркестрирует: лог прохода (`passlog.py`) → проверка шаблонов
+промпта включённых проектов (`prompt_check.py`) → lock (`lock.py`) →
 уборка (`housekeeping.py`, `repo_source.py`) → проверка `glab` и поиск MR
 (`gitlab.py`) → выбор → для каждого MR: claim (`publishing.py` +
 `gitlab.py`) → подготовка репозитория (`repo_source.py`) → движок →
@@ -86,11 +93,13 @@
 | Модуль | Ответственность |
 | --- | --- |
 | `__init__.py`, `__main__.py` | пакет; `python -m review_agent` |
-| `cli.py` | точки входа `review-agent`, `poll`, `usage`; разбор флагов; ручной режим |
+| `cli.py` | точки входа `review-agent`, `poll`, `usage`, `prompt-check`; разбор флагов; ручной режим |
 | `config.py` | загрузка и проверка YAML-конфига, значения по умолчанию, итоговые настройки проекта |
 | `pipeline.py` | движок одного ревью: worktree → промпт → `opencode.json` → харнесс → учёт → уборка |
 | `worktree.py` | создание и гарантированное удаление `git worktree`, уборка осиротевших |
-| `prompt.py` | промпт ревью (методология), поиск инструкций и `docs/` целевого репозитория |
+| `prompt.py` | рендер промпта из Jinja2-шаблона, поиск инструкций и `docs/` целевого репозитория по спискам-кандидатам |
+| `prompts/default.md.j2` | встроенный шаблон промпта — единственное место методологии по умолчанию |
+| `prompt_check.py` | проверка шаблонов промпта (ошибки/предупреждения) и общий шаг «проверить перед работой» для `poll` и ручного режима |
 | `harness_config.py` | `opencode.json` с read-only агентом и safety-note |
 | `harness.py` | вызов харнесса подпроцессом: подстановка плейсхолдеров, PATH-резолвинг, UTF-8 |
 | `report.py` | запись отчёта ручного режима в файл |

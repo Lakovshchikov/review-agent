@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from review_agent.config import Config, ProviderConfig
+from review_agent.prompt import template_label, template_sha256
 from review_agent.review_stats import ChangeSize, count_findings, measure_change
 from review_agent.usage_source import RunUsage, SessionUsage, UsageSource
 
@@ -77,8 +78,13 @@ def build_review_record(
     change: ChangeSize | None,
     findings: dict[str, int] | None,
     quota: QuotaReading | None,
+    prompt_template: str | None = None,
 ) -> dict[str, Any]:
-    """The ledger record of one review run; every key is always present."""
+    """The ledger record of one review run; every key is always present.
+
+    `prompt_template` None = the built-in template. Its hash covers the
+    template file's own content only, not templates it extends.
+    """
     totals = usage.totals if usage is not None else None
     missing_reason = usage.missing_reason if usage is not None else "usage not collected"
     return {
@@ -94,6 +100,8 @@ def build_review_record(
         "gen_ai.request.model": provider.model,
         "review.reasoning_effort": provider.reasoning_effort,
         "review.skills": [Path(s).name for s in skills],
+        "review.prompt.template": template_label(prompt_template),
+        "review.prompt.sha256": template_sha256(prompt_template),
         "review.harness.name": usage.harness_name if usage is not None else None,
         "review.harness.version": usage.harness_version if usage is not None else None,
         "review.outcome": outcome,
@@ -213,6 +221,7 @@ class UsageRecorder:
         duration_ms: int,
         report: str | None,
         quota: QuotaReading | None,
+        prompt_template: str | None = None,
     ) -> None:
         try:
             change = measure_change(worktree_path, base_sha, head_sha)
@@ -236,6 +245,7 @@ class UsageRecorder:
                 change=change,
                 findings=count_findings(report),
                 quota=quota,
+                prompt_template=prompt_template,
             )
             append_record(self.ledger_path, record, self.warn_once)
         except Exception as exc:  # noqa: BLE001 - accounting never affects the review

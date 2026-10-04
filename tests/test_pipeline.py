@@ -303,3 +303,48 @@ def test_prompt_is_identical_with_and_without_accounting(git_repo_with_base_and_
 def test_without_recorder_no_ledger_appears(git_repo_with_base_and_head, tmp_path):
     _review(git_repo_with_base_and_head, _ok, config_path=_config(tmp_path))
     assert not (tmp_path / "work" / "usage").exists()
+
+
+# -- prompt settings (configurable-review-prompt) ------------------------------
+
+import hashlib
+
+
+def test_project_template_and_candidates_reach_the_prompt(git_repo_with_base_and_head, tmp_path):
+    fixture = git_repo_with_base_and_head
+    template = tmp_path / "prompts" / "own.md.j2"
+    template.parent.mkdir()
+    template.write_text(
+        "OWN {{ base_sha }} | {{ repo_instructions_path or 'нет инструкций' }} | {{ docs_path or 'нет docs' }}\n",
+        encoding="utf-8",
+    )
+    debug_dir = tmp_path / "work" / "debug" / "run-1"
+    captured = {}
+
+    def stub(argv, **kwargs):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0, "# Отчёт", "")
+
+    config_path = _config(
+        tmp_path, prompt={"template": str(template), "instruction_files": [], "docs_dirs": []}
+    )
+    _review(fixture, stub, config_path=config_path, debug_dir=debug_dir)
+
+    expected = f"OWN {fixture['base_sha']} | нет инструкций | нет docs\n"
+    assert captured["argv"][-1] == expected
+    assert (debug_dir / "prompt.md").read_text(encoding="utf-8") == expected
+
+
+def test_record_names_the_prompt_template(git_repo_with_base_and_head, tmp_path):
+    template = tmp_path / "own.md.j2"
+    template.write_text("Review {{ base_sha }}\n", encoding="utf-8")
+    recorder, _, _ = _recorder(tmp_path, StubSource())
+    _review(
+        git_repo_with_base_and_head,
+        _ok,
+        config_path=_config(tmp_path, prompt={"template": str(template)}),
+        usage=recorder,
+    )
+    record = read_records(recorder.ledger_path)[0][0]
+    assert record["review.prompt.template"] == str(template)
+    assert record["review.prompt.sha256"] == hashlib.sha256(template.read_bytes()).hexdigest()
