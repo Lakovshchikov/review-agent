@@ -38,7 +38,13 @@ context: |
      авторизацией через glab. Проверен на Windows и боевом GitLab (в т.ч.
      клон без консоли) — validation-notes.md этого архива.
 
-  Дорожная карта п.1–4 выполнена; следующие change — из бэклога AGENTS.md п.7.
+  5. review-usage-accounting — применён и проверен вживую
+     (openspec/changes/review-usage-accounting, validation-notes.md);
+     к архиву — после первого прохода по расписанию (задача 7.2).
+     Журнал расхода usage/ledger.jsonl, замер остатка квоты в интерактиве,
+     `review-agent usage`.
+
+  Дорожная карта п.1–5 выполнена; следующие change — из бэклога AGENTS.md п.7.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 

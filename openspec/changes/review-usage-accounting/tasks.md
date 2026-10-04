@@ -208,13 +208,13 @@
   Затем то же без сети. Проверка: API-эквивалент, источник цены,
   измеренная доля для ревью из 7.1 и предупреждение о копии без сети.
   Записано в `validation-notes.md`.
-- [ ] 7.5 Один прогон с `--print-logs --log-level debug` в
+- [x] 7.5 Один прогон с `--print-logs --log-level debug` в
   `harness.command`: поиск `x-codex`/`used-percent` в выводе. Заодно
   проверить, принимает ли `opencode run --session` свой ID и работает
   ли `--title` (Open Questions design.md). Проверка: результаты
   записаны в `validation-notes.md` и в пункт бэклога AGENTS.md про
   автоматический замер лимитов.
-- [ ] 7.6 Обновить AGENTS.md: п.7 (change 5 `review-usage-accounting`),
+- [x] 7.6 Обновить AGENTS.md: п.7 (change 5 `review-usage-accounting`),
   п.9 (команда `usage`, интерактивный замер, папка `usage/`), бэклог
   (OTLP-sink, строка расхода в MR-комментарии, LiteLLM для этапа CI,
   выбор модели по размеру MR) и `openspec/config.yaml` (статус дорожной
