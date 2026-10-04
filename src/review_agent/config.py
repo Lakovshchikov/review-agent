@@ -103,6 +103,7 @@ class SafetyConfig:
 
 DEFAULT_WORK_DIR = "./.review-agent"
 DEFAULT_RETENTION_DAYS = 7
+DEFAULT_REPO_RETENTION_DAYS = 30
 DEFAULT_CLAIM_TTL_MINUTES = 240
 
 
@@ -121,6 +122,10 @@ class StorageConfig:
     # disables age-based deletion. Transient files are deleted right
     # after each review regardless.
     retention_days: int | None = DEFAULT_RETENTION_DAYS
+    # Age limit for managed repository copies (<work_dir>/repos/, see
+    # repo_source.py), counted from their last use by a review; None
+    # disables age-based deletion.
+    repo_retention_days: int | None = DEFAULT_REPO_RETENTION_DAYS
 
 
 @dataclasses.dataclass(frozen=True)
@@ -128,9 +133,12 @@ class GitLabProjectConfig:
     # GitLab project path, e.g. "b2c/front-shopping"
     path: str
     # Local clone the review worktrees are created from. Never modified
-    # beyond fetching the MR ref (see worktree.fetch_ref).
-    local_repo: str
-    remote: str = "origin"
+    # beyond fetching the MR's branches (see repo_source.py). None = use a
+    # managed copy in <work_dir>/repos/ instead.
+    local_repo: str | None = None
+    # Remote of `local_repo` pointing at this project; only valid together
+    # with `local_repo` (a managed copy always uses "origin").
+    remote: str | None = None
     enabled: bool = True
     # Per-project overrides: None = "not set, use the global value". A
     # set value REPLACES the global one as a whole (no merging), so
@@ -139,6 +147,11 @@ class GitLabProjectConfig:
     review_drafts: bool | None = None
     provider: ProviderConfig | None = None
     skills: list[str] | None = None
+
+    @property
+    def local_remote(self) -> str:
+        """Remote of `local_repo` to fetch the MR's branches from."""
+        return self.remote or "origin"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -322,7 +335,14 @@ def _load_storage(storage_data: Any) -> StorageConfig:
     retention_days = storage_data.get("retention_days", DEFAULT_RETENTION_DAYS)
     if retention_days is not None:
         retention_days = _positive_int(retention_days, "storage.retention_days")
-    return StorageConfig(work_dir=work_dir, retention_days=retention_days)
+    repo_retention_days = storage_data.get("repo_retention_days", DEFAULT_REPO_RETENTION_DAYS)
+    if repo_retention_days is not None:
+        repo_retention_days = _positive_int(repo_retention_days, "storage.repo_retention_days")
+    return StorageConfig(
+        work_dir=work_dir,
+        retention_days=retention_days,
+        repo_retention_days=repo_retention_days,
+    )
 
 
 def best_effort_work_dir(path: str | Path) -> Path:
@@ -373,10 +393,16 @@ def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
         if not isinstance(project_data, dict):
             raise ConfigError(f"'{section}' must be a mapping")
         path = _require(project_data, "path", section)
-        local_repo = _require(project_data, "local_repo", section)
-        remote = project_data.get("remote", "origin")
-        if not all(isinstance(v, str) and v for v in (path, local_repo, remote)):
+        local_repo = project_data.get("local_repo")
+        remote = project_data.get("remote")
+        optional = [v for v in (local_repo, remote) if v is not None]
+        if not all(isinstance(v, str) and v for v in (path, *optional)):
             raise ConfigError(f"'{section}' path/local_repo/remote must be non-empty strings")
+        if remote is not None and local_repo is None:
+            raise ConfigError(
+                f"'{section}' ({path}) sets 'remote' without 'local_repo': a remote is "
+                "only meaningful for a local clone; remove it to use a managed copy"
+            )
         enabled = project_data.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ConfigError(f"'{section}.enabled' must be true or false")

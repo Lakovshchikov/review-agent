@@ -38,12 +38,19 @@ def test_api_call_builds_argv_with_hostname_and_utf8():
 
 def test_project_path_is_url_encoded():
     assert encode_project("b2c/front-shopping") == "b2c%2Ffront-shopping"
-    stub = StubGlab(
-        [("merge_requests/544", 0, json.dumps({"diff_refs": {"base_sha": "b" * 40, "head_sha": "h" * 40}}), "")]
-    )
+    mr = {"target_branch": "main", "diff_refs": {"base_sha": "b" * 40, "head_sha": "h" * 40}}
+    stub = StubGlab([("merge_requests/544", 0, json.dumps(mr), "")])
     refs = _client(stub).get_diff_refs("b2c/front-shopping", 544)
-    assert (refs.base_sha, refs.head_sha) == ("b" * 40, "h" * 40)
+    assert (refs.base_sha, refs.head_sha, refs.target_branch) == ("b" * 40, "h" * 40, "main")
     assert "projects/b2c%2Ffront-shopping/merge_requests/544" in stub.calls[0]["argv"]
+    assert len(stub.calls) == 1  # target branch comes from the same API response
+
+
+def test_diff_refs_without_target_branch_is_an_error():
+    mr = {"diff_refs": {"base_sha": "b" * 40, "head_sha": "h" * 40}}
+    stub = StubGlab([("merge_requests/544", 0, json.dumps(mr), "")])
+    with pytest.raises(GitLabError, match="target_branch"):
+        _client(stub).get_diff_refs("b2c/front-shopping", 544)
 
 
 def test_glab_failure_raises_typed_error_with_stderr():

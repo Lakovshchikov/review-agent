@@ -111,6 +111,7 @@ safety:
 #   logs/     лог каждого прохода + stderr харнесса упавших ревью
 #   dry-run/  несостоявшиеся комментарии `poll --dry-run`
 #   debug/    все артефакты прогонов с флагом --debug
+#   repos/    кэш-клоны проектов без local_repo — живут дольше прохода
 #   poll.lock один прогон за раз на эту папку
 # Относительный путь считается от текущей папки процесса (у задачи Task
 # Scheduler это папка проекта — её задаёт scripts/register-task.ps1).
@@ -119,6 +120,10 @@ storage:
   # logs/, dry-run/ и debug/ старше этого числа дней удаляются в начале
   # каждого прохода `poll`. null — не удалять по возрасту.
   retention_days: 7
+  # Кэш-клон в repos/, которым ни одно ревью не пользовалось дольше этого
+  # числа дней, удаляется в начале прохода (при следующей нужде склонируется
+  # заново). Отдельно от retention_days. null — не удалять по возрасту.
+  repo_retention_days: 30
 
 # Опрос GitLab — нужна только для `review-agent poll` (ручной режим
 # `review-agent --repo ... --base ... --head ...` эту секцию игнорирует).
@@ -143,9 +148,15 @@ gitlab:
   # времени задачи Task Scheduler (-ExecutionTimeLimitHours, по умолчанию 4 ч).
   claim_ttl_minutes: 240
   projects:
-    - path: b2c/front-shopping           # путь проекта в GitLab
-      local_repo: C:/repos/front-shopping  # локальный клон; review-agent только делает в нём fetch
-      remote: origin                     # remote клона, указывающий на этот проект (по умолчанию origin)
+    # Минимальная запись — только путь проекта в GitLab. Без local_repo
+    # review-agent сам держит bare-клон https://<hostname>/<path>.git в
+    # <work_dir>/repos/ (клонирует при первом ревью MR, авторизуется через
+    # тот же `glab`, зависимости не ставит).
+    - path: b2c/front-shopping
+    # Либо свой готовый клон: review-agent только делает в нём fetch веток MR.
+    - path: b2c/front-tools
+      local_repo: C:/repos/front-tools   # локальный клон
+      remote: origin                     # remote клона (по умолчанию origin); только вместе с local_repo
     # Необязательные переопределения проекта: enabled, reviewers,
     # review_drafts, provider, skills. Не указано — берётся глобальное
     # значение; указано — ЗАМЕНЯЕТ глобальное целиком (provider — весь

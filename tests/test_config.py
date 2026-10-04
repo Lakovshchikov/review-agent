@@ -24,9 +24,12 @@ def test_example_config_loads_without_error():
     assert config.gitlab.claim_ttl_minutes == 240
     assert config.storage.work_dir == "./.review-agent"
     assert config.storage.retention_days == 7
-    assert config.gitlab.projects[1].provider.reasoning_effort == "high"
-    assert config.gitlab.projects[1].skills == []
-    assert config.gitlab.projects[2].enabled is False
+    assert config.storage.repo_retention_days == 30
+    assert config.gitlab.projects[0].local_repo is None
+    assert config.gitlab.projects[1].local_remote == "origin"
+    assert config.gitlab.projects[2].provider.reasoning_effort == "high"
+    assert config.gitlab.projects[2].skills == []
+    assert config.gitlab.projects[3].enabled is False
 
 
 def test_missing_required_field_raises(tmp_path):
@@ -123,9 +126,10 @@ def test_valid_gitlab_section_loads_with_defaults(tmp_path):
     assert config.gitlab.review_drafts is False
     assert config.gitlab.min_report_chars == 200
     project = config.gitlab.projects[0]
-    assert (project.path, project.local_repo, project.remote) == (
+    assert (project.path, project.local_repo, project.remote, project.local_remote) == (
         "b2c/front-shopping",
         "C:/repos/front",
+        None,
         "origin",
     )
 
@@ -135,7 +139,7 @@ def test_valid_gitlab_section_loads_with_defaults(tmp_path):
     [
         ("gitlab:\n  hostname: h\n  reviewers: []\n  projects:\n    - {path: a/b, local_repo: r}\n", "reviewers"),
         ("gitlab:\n  hostname: h\n  reviewers: [u]\n  projects: []\n", "projects"),
-        ("gitlab:\n  hostname: h\n  reviewers: [u]\n  projects:\n    - {path: a/b}\n", "local_repo"),
+        ("gitlab:\n  hostname: h\n  reviewers: [u]\n  projects:\n    - {path: a/b, local_repo: ''}\n", "local_repo"),
         ("gitlab:\n  reviewers: [u]\n  projects:\n    - {path: a/b, local_repo: r}\n", "hostname"),
         (
             "gitlab:\n  hostname: h\n  reviewers: [u]\n  min_report_chars: -1\n"
@@ -306,6 +310,45 @@ def test_storage_section(tmp_path):
     config = load_config(_write_cfg(tmp_path, storage={"retention_days": None}))
     assert config.storage.retention_days is None
     assert config.storage.work_dir == DEFAULT_WORK_DIR
+
+
+def test_repo_retention_days(tmp_path):
+    assert load_config(_write_cfg(tmp_path)).storage.repo_retention_days == 30
+    config = load_config(_write_cfg(tmp_path, storage={"repo_retention_days": 90, "retention_days": 3}))
+    assert (config.storage.repo_retention_days, config.storage.retention_days) == (90, 3)
+    config = load_config(_write_cfg(tmp_path, storage={"repo_retention_days": None}))
+    assert config.storage.repo_retention_days is None
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "30"])
+def test_invalid_repo_retention_days(tmp_path, bad):
+    with pytest.raises(ConfigError, match="repo_retention_days"):
+        load_config(_write_cfg(tmp_path, storage={"repo_retention_days": bad}))
+
+
+def test_project_without_local_repo_uses_managed_copy(tmp_path):
+    config = load_config(_write_cfg(tmp_path, gitlab={"reviewers": ["bot"], "projects": [{"path": "a/b"}]}))
+    project = config.gitlab.projects[0]
+    assert project.local_repo is None and project.remote is None
+
+
+def test_local_repo_with_explicit_remote(tmp_path):
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            gitlab={"reviewers": ["bot"], "projects": [{"path": "a/b", "local_repo": "c", "remote": "upstream"}]},
+        )
+    )
+    assert config.gitlab.projects[0].local_remote == "upstream"
+
+
+def test_remote_without_local_repo_is_rejected(tmp_path):
+    path = _write_cfg(
+        tmp_path,
+        gitlab={"reviewers": ["bot"], "projects": [{"path": "a/b"}, {"path": "x/y", "remote": "upstream"}]},
+    )
+    with pytest.raises(ConfigError, match=r"gitlab\.projects\[1\].*x/y.*remote"):
+        load_config(path)
 
 
 @pytest.mark.parametrize("bad", [0, -1, True, "7"])

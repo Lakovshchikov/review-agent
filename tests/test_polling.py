@@ -25,6 +25,7 @@ from review_agent.harness import HarnessError
 from review_agent.pipeline import ReviewResult
 from review_agent.gitlab import NoteNotFound
 from review_agent.publishing import build_claim_marker
+from review_agent.repo_source import PreparedRepo
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
 
@@ -97,7 +98,11 @@ class FakeGitLab:
 
     def get_diff_refs(self, project, iid):
         mr = self.mrs[(project, iid)]
-        return DiffRefs(base_sha=mr.get("base", "b" * 40), head_sha=mr.get("head", f"{iid:040x}"))
+        return DiffRefs(
+            base_sha=mr.get("base", "b" * 40),
+            head_sha=mr.get("head", f"{iid:040x}"),
+            target_branch=mr.get("target", "main"),
+        )
 
     # -- writes
     def _note(self, project, iid, note_id):
@@ -201,7 +206,9 @@ class Recorder:
         self.report = report
         self.fail_for = set(fail_for)
         self.reviews = []
-        self.fetches = []
+        self.prepares = []
+        self.prepare_warnings = []
+        self.prepare_error = None
         self.during_review = None  # called inside review(), e.g. to mutate GitLab
 
     def review(self, **kwargs):
@@ -215,8 +222,18 @@ class Recorder:
             raise HarnessError("harness exploded", stderr="трасса упавшего харнесса")
         return ReviewResult(report=self.report, harness_stderr="trace", run_id="r1")
 
-    def fetch(self, repo, remote, refspec):
-        self.fetches.append((repo, remote, refspec))
+    def sources(self, config, work_dir, log):
+        recorder = self
+
+        class StubSources:
+            def prepare(self, project, target_branch, iid):
+                recorder.prepares.append((project.path, target_branch, iid))
+                if recorder.prepare_error is not None:
+                    raise recorder.prepare_error
+                path = Path(project.local_repo) if project.local_repo else work_dir.repos / "copy.git"
+                return PreparedRepo(path, list(recorder.prepare_warnings))
+
+        return StubSources()
 
 
 def _poll(setup, gitlab, recorder, *, answers=(), tty=True, output=None, **kwargs):
@@ -234,7 +251,7 @@ def _poll(setup, gitlab, recorder, *, answers=(), tty=True, output=None, **kwarg
         config_path=setup["config"],
         client_factory=gitlab,
         review_fn=recorder.review,
-        fetch_fn=recorder.fetch,
+        repo_sources_factory=recorder.sources,
         input_fn=input_fn,
         output_fn=out.append,
         stdin_isatty=lambda: tty,
@@ -260,10 +277,12 @@ def test_all_mode_publishes_each_mr_once_with_marker(setup):
     assert [(p, i) for p, i, _ in gitlab.published] == [("b2c/front", 1), ("b2c/other", 2)]
     assert build_marker("a" * 40) in gitlab.published[0][2]
     assert GOOD_REPORT.strip() in gitlab.published[0][2]
-    # Review used GitLab's diff_refs and MR metadata; MR ref was fetched first.
+    # Review used GitLab's diff_refs and MR metadata; the MR's branches were
+    # brought up to date in the project's clone first.
     assert recorder.reviews[0]["head_sha"] == "a" * 40
     assert recorder.reviews[0]["mr_title"] == "one"
-    assert recorder.fetches[0][1:] == ("origin", "refs/merge-requests/1/head")
+    assert recorder.prepares[0] == ("b2c/front", "main", 1)
+    assert recorder.reviews[0]["repo_path"] == setup["tmp"] / "clone-a"
 
 
 def test_already_reviewed_mr_is_skipped(setup):
@@ -411,11 +430,7 @@ def test_failed_mr_ref_fetch_is_not_fatal(setup):
 def test_failed_fetch_reason_is_kept_when_review_then_fails(setup):
     gitlab = FakeGitLab({("b2c/front", 2): _mr(state="merged", head="2" * 40)})
     recorder = Recorder(fail_for={"2" * 40})
-
-    def failing_fetch(repo, remote, refspec):
-        raise RuntimeError("couldn't find remote ref")
-
-    recorder.fetch = failing_fetch
+    recorder.prepare_warnings = ["fetch refs/merge-requests/2/head: couldn't find remote ref"]
     output = []
 
     assert _poll(setup, gitlab, recorder, review_all=True, include_closed=True, output=output) == EXIT_FAILURES
@@ -972,7 +987,7 @@ def test_no_console_streams(setup, monkeypatch):
         review_all=True,
         client_factory=gitlab,
         review_fn=Recorder().review,
-        fetch_fn=lambda *a: None,
+        repo_sources_factory=Recorder().sources,
         orphan_cleanup_fn=lambda *a: None,
         is_git_repo=lambda path: path.is_dir(),
         now_fn=lambda: NOW,
@@ -1023,7 +1038,7 @@ def test_orphan_worktree_of_killed_run_removed_on_real_clone(git_repo_with_base_
         review_all=True,
         client_factory=FakeGitLab({}),
         review_fn=Recorder().review,
-        fetch_fn=lambda *a: None,
+        repo_sources_factory=Recorder().sources,
         output_fn=lambda line: None,
     )
 
@@ -1039,3 +1054,209 @@ def test_orphan_worktree_of_killed_run_removed_on_real_clone(git_repo_with_base_
     assert subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True
     ).stdout == branch_before
+
+
+# -- managed repository copies ------------------------------------------------
+
+
+def _without_local_repo(setup, index=0):
+    def change(cfg):
+        cfg["gitlab"]["projects"][index].pop("local_repo")
+
+    _edit_config(setup, change)
+
+
+def test_project_without_local_repo_reviewed_against_managed_copy(setup):
+    _without_local_repo(setup)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr(target="develop")})
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_OK
+    assert recorder.prepares == [("b2c/front", "develop", 1)]
+    assert recorder.reviews[0]["repo_path"] == setup["work"] / "repos" / "copy.git"
+    assert len(gitlab.published) == 1
+
+
+def test_project_without_candidates_is_not_cloned(setup):
+    _without_local_repo(setup)
+    recorder = Recorder()
+    assert _poll(setup, FakeGitLab({("b2c/other", 2): _mr()}), recorder, review_all=True) == EXIT_OK
+    assert [p for p, _, _ in recorder.prepares] == ["b2c/other"]
+
+
+def test_unselected_project_is_not_cloned_interactively(setup):
+    _without_local_repo(setup)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one"), ("b2c/other", 2): _mr("two")})
+    recorder = Recorder()
+    assert _poll(setup, gitlab, recorder, answers=["2"]) == EXIT_OK
+    assert [p for p, _, _ in recorder.prepares] == ["b2c/other"]
+
+
+def test_failure_to_obtain_copy_fails_mr_and_removes_claim(setup):
+    from review_agent.repo_source import RepoSourceError
+
+    _without_local_repo(setup)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr(), ("b2c/other", 2): _mr()})
+    recorder = Recorder()
+    recorder.prepare_error = RepoSourceError("не удалось склонировать: could not read Username")
+    output = []
+
+    assert _poll(setup, gitlab, recorder, review_all=True, output=output) == EXIT_FAILURES
+    assert gitlab.mrs[("b2c/front", 1)]["notes"] == []  # claim removed
+    assert recorder.reviews == []
+    assert any("[failed] b2c/front !1" in line and "could not read Username" in line for line in output)
+    assert _tmp_is_empty(setup)
+
+
+def test_fetch_warning_does_not_fail_review(setup):
+    gitlab = FakeGitLab({("b2c/front", 1): _mr()})
+    recorder = Recorder()
+    recorder.prepare_warnings = ["fetch refs/merge-requests/1/head из 'origin' не удался: gone"]
+
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_OK
+    assert len(gitlab.published) == 1
+    assert "refs/merge-requests/1/head" in _pass_logs(setup)[0].read_text(encoding="utf-8")
+
+
+def _managed_config(tmp_path, work, **storage):
+    config = tmp_path / "managed-config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "provider": {"name": "p", "model": "m", "reasoning_effort": None},
+                "harness": {"command": ["stub"]},
+                "report": {"output_path": "r-{run_id}.md"},
+                "storage": {"work_dir": str(work), **storage},
+                "gitlab": {"hostname": "h", "reviewers": ["ai-reviewer"], "projects": [{"path": "group/project"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def _real_sources(fake_gitlab):
+    from review_agent.repo_source import RepoSources
+
+    def factory(config, work_dir, log):
+        return RepoSources(
+            work_dir.repos, "h", url_fn=lambda path: str(fake_gitlab.bare), credential_helper="!true", notify=log.info
+        )
+
+    return factory
+
+
+def test_end_to_end_review_against_managed_copy(fake_gitlab, tmp_path):
+    from conftest import has_commit
+
+    from review_agent.repo_source import LAST_USED_MARKER, cache_name
+    from review_agent.worktree import managed_worktree
+
+    work = tmp_path / "work"
+    config = _managed_config(tmp_path, work)
+    seen = []
+
+    def review(**kwargs):
+        # What the engine does first: a worktree at head, base available.
+        with managed_worktree(kwargs["repo_path"], kwargs["base_sha"], kwargs["head_sha"], work / "tmp") as wt:
+            seen.append((wt.path / "f.txt").read_text(encoding="utf-8"))
+        return ReviewResult(report=GOOD_REPORT, harness_stderr="", run_id="r")
+
+    def run(iid, head, base):
+        gitlab = FakeGitLab({("group/project", iid): _mr(head=head, base=base)})
+        output = []
+        code = run_poll(
+            config_path=config, review_all=True, client_factory=gitlab, review_fn=review,
+            repo_sources_factory=_real_sources(fake_gitlab), output_fn=output.append, now_fn=lambda: NOW,
+        )  # fmt: skip
+        return code, gitlab, output
+
+    mr1 = fake_gitlab.push_mr(1, "mr one\n")
+    code, gitlab, output = run(1, mr1, fake_gitlab.base_sha)
+    assert code == EXIT_OK and len(gitlab.published) == 1
+    assert any("Клонирование" in line for line in output)
+
+    # Main moves after the clone; the next MR is based on the new main.
+    new_base = fake_gitlab.commit_main("moved main\n")
+    mr2 = fake_gitlab.push_mr(2, "mr two\n")
+    code, gitlab, output = run(2, mr2, new_base)
+    assert code == EXIT_OK and len(gitlab.published) == 1
+    assert not any("Клонирование" in line for line in output)  # reused, not cloned again
+
+    copy = work / "repos" / cache_name("group/project")
+    assert seen == ["mr one\n", "mr two\n"]
+    assert has_commit(copy, new_base) and (copy / LAST_USED_MARKER).is_file()
+    assert not any((work / "tmp").iterdir())
+    assert [p.name for p in (work / "repos").iterdir()] == [copy.name]
+
+
+def _copy_with_orphan(fake_gitlab, work, age_days=0):
+    import subprocess
+
+    from review_agent.repo_source import LAST_USED_MARKER, RepoSources
+    from review_agent.config import GitLabProjectConfig
+
+    sources = RepoSources(work / "repos", "h", url_fn=lambda p: str(fake_gitlab.bare), credential_helper="!true")
+    copy = sources.prepare(GitLabProjectConfig(path="group/project"), "main", 1).path
+    orphan = work / "tmp" / "1700000000-deadbeef" / "worktree"
+    orphan.parent.mkdir(parents=True)
+    subprocess.run(["git", "-C", str(copy), "worktree", "add", "--detach", str(orphan), "main"], check=True, capture_output=True)
+    stamp = NOW.timestamp() - age_days * 86400 if age_days else None
+    if stamp is not None:
+        os.utime(copy / LAST_USED_MARKER, (stamp, stamp))
+    return copy, orphan
+
+
+def _worktrees(repo):
+    import subprocess
+
+    return subprocess.run(["git", "-C", str(repo), "worktree", "list", "--porcelain"], capture_output=True, text=True).stdout
+
+
+def test_orphan_worktree_in_managed_copy_removed_copy_kept(fake_gitlab, tmp_path):
+    work = tmp_path / "work"
+    copy, orphan = _copy_with_orphan(fake_gitlab, work)
+    code = run_poll(
+        config_path=_managed_config(tmp_path, work, retention_days=1), review_all=True,
+        client_factory=FakeGitLab({}), review_fn=Recorder().review, output_fn=lambda line: None,
+    )  # fmt: skip
+    assert code == EXIT_OK
+    assert copy.exists() and not orphan.exists()
+    assert str(orphan) not in _worktrees(copy)
+
+
+def test_unused_copy_expires_and_is_logged(fake_gitlab, tmp_path):
+    work = tmp_path / "work"
+    copy, _ = _copy_with_orphan(fake_gitlab, work, age_days=45)
+    (work / "repos" / ".incoming-1-x").mkdir()
+    output = []
+    code = run_poll(
+        config_path=_managed_config(tmp_path, work), review_all=True, client_factory=FakeGitLab({}),
+        review_fn=Recorder().review, output_fn=output.append,
+    )  # fmt: skip
+    assert code == EXIT_OK
+    assert not copy.exists() and not (work / "repos" / ".incoming-1-x").exists()
+    text = "\n".join(output)
+    assert "дольше 30 дн.: 1" in text and "недокачанные или повреждённые кэш-клоны: 1" in text
+
+
+def test_copy_older_than_artifact_retention_but_recent_use_is_kept(fake_gitlab, tmp_path):
+    work = tmp_path / "work"
+    copy, _ = _copy_with_orphan(fake_gitlab, work, age_days=10)
+    code = run_poll(
+        config_path=_managed_config(tmp_path, work, retention_days=7), review_all=True,
+        client_factory=FakeGitLab({}), review_fn=Recorder().review, output_fn=lambda line: None,
+    )  # fmt: skip
+    assert code == EXIT_OK and copy.exists()
+
+
+def test_copies_untouched_when_lock_is_busy(fake_gitlab, tmp_path):
+    work = tmp_path / "work"
+    copy, orphan = _copy_with_orphan(fake_gitlab, work, age_days=45)
+    (work / "poll.lock").write_text(str(os.getpid()), encoding="utf-8")
+    code = run_poll(
+        config_path=_managed_config(tmp_path, work), review_all=True, client_factory=FakeGitLab({}),
+        review_fn=Recorder().review, output_fn=lambda line: None,
+    )  # fmt: skip
+    assert code == EXIT_NOT_STARTED
+    assert copy.exists() and orphan.exists()

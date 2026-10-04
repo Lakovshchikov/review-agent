@@ -224,6 +224,18 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    проход их пропускает. BREAKING: убран `--scratch-dir`. Детали и
    бэклог — `validation-notes.md` change'а
 
+4. **`managed-repo-cache`** — 🔧 РЕАЛИЗОВАН, ждёт живой проверки
+   (`openspec/changes/managed-repo-cache`). `local_repo` у проекта
+   необязателен: без него review-agent сам держит bare-клон
+   `https://<hostname>/<path>.git` в `<work_dir>/repos/` (лениво, после
+   claim; авторизация git через `glab auth git-credential`, записанный в
+   конфиг кэш-клона — проверено вживую на Windows до реализации), перед
+   каждым ревью одним fetch подтягивает целевую ветку MR и MR-ref (и в
+   `local_repo` — только в remote-tracking ref), удаляет кэш-клоны,
+   не использовавшиеся `storage.repo_retention_days` (30). Осталось:
+   живая проверка на боевом GitLab (задача 8.2) — `validation-notes.md`
+   change'а
+
 **Бэклог (отдельные будущие change, п.1–3 завершены — можно пропозить):**
 - прекращать проход после фатальной ошибки провайдера (лимит/авторизация),
   не пробуя остальные MR (иначе claim создаётся и удаляется на каждом MR)
@@ -267,9 +279,12 @@ Get-ScheduledTaskInfo -TaskName review-agent-poll          # LastTaskResult: 0/1
 
 Всё, что пишет review-agent, — в `storage.work_dir` конфига (по
 умолчанию `./.review-agent`): `tmp/` пуст после прохода, `logs/` — лог
-каждого прохода. Флага `--scratch-dir` больше нет.
+каждого прохода, `repos/` — кэш-клоны проектов без `local_repo` (живут
+`storage.repo_retention_days` с последнего использования). Флага
+`--scratch-dir` больше нет.
 
 Внешние инструменты (не Python-зависимости): `git`, `opencode`
 (харнесс), `glab` (только для `poll`, заранее авторизованный —
-`glab auth login --hostname <host>`). Линтера в проекте пока нет.
+`glab auth login --hostname <host>`; он же авторизует git для кэш-клонов,
+нужна поддержка `glab auth git-credential`). Линтера в проекте пока нет.
 Подробности конфигурации и поведения — README.
