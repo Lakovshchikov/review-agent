@@ -161,7 +161,7 @@ change пропозится только после `apply` и ручной пр
 | 4 | `managed-repo-cache` | `local_repo` необязателен: кэш bare-клонов с авторизацией через `glab` | `archive/2026-10-04-managed-repo-cache` |
 | 5 | `review-usage-accounting` | журнал расхода, замер квоты в интерактиве, `review-agent usage` | `archive/2026-10-04-review-usage-accounting` |
 | 6 | `gitlab-file-links` | ссылки на файлы в отчёте ведут на GitLab в отревьюенном коммите | `archive/2026-10-04-gitlab-file-links` |
-| 7 | `restructure-documentation` | README как справочник, `docs/`, карта и правило актуализации документации | в работе |
+| 7 | `restructure-documentation` | README как справочник, `docs/`, карта репозитория и правило актуализации документации (п.10–11) | `archive/2026-10-04-restructure-documentation` |
 
 Пути архивов — относительно `openspec/changes/`.
 

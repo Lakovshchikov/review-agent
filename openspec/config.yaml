@@ -50,7 +50,13 @@ context: |
      GitLab в отревьюенном коммите (blob/<head_sha>/path#L..); проверен на
      реальных отчётах и живым poll --dry-run (!11) — validation-notes.md.
 
-  Дорожная карта п.1–6 выполнена; следующие change — из бэклога AGENTS.md п.7.
+  7. restructure-documentation — применён и заархивирован
+     (openspec/changes/archive/2026-10-04-restructure-documentation).
+     README — справочник по использованию, подробности в docs/, в AGENTS.md
+     карта репозитория (п.10) и правило актуализации документации (п.11);
+     tests/test_docs.py сверяет README с CLI. Поведение не менялось.
+
+  Дорожная карта п.1–7 выполнена; следующие change — из бэклога AGENTS.md п.7.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 
