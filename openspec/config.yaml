@@ -40,7 +40,7 @@ context: |
 
   5. review-usage-accounting — применён и проверен вживую
      (openspec/changes/review-usage-accounting, validation-notes.md);
-     к архиву — после первого прохода по расписанию (задача 7.2).
+     все задачи выполнены, готов к архиву.
      Журнал расхода usage/ledger.jsonl, замер остатка квоты в интерактиве,
      `review-agent usage`.
 
