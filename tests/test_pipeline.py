@@ -147,3 +147,157 @@ def test_passed_config_overrides_config_file(git_repo_with_base_and_head, tmp_pa
 
     assert "openai/gpt-5#high" in captured["argv"]
     assert str(skill) in captured["argv"][-1]  # the prompt names the project's skill file
+
+
+# -- usage accounting ----------------------------------------------------------
+
+from review_agent.usage_ledger import RunLabels, UsageRecorder, read_records  # noqa: E402
+from review_agent.usage_source import RunUsage, SessionUsage, TokenCounts  # noqa: E402
+
+
+class StubSource:
+    def __init__(self, usage=None, error=None):
+        self.usage = usage
+        self.error = error
+        self.seen = []
+
+    def collect(self, worktree_path):
+        self.seen.append((worktree_path, worktree_path.exists()))
+        if self.error:
+            raise self.error
+        return self.usage or RunUsage(
+            harness_name="opencode",
+            harness_version="2.0.21",
+            sessions=[
+                SessionUsage(
+                    id="ses_1",
+                    parent=None,
+                    agent="reviewer",
+                    tokens=TokenCounts(input=100, cache_read=50, cache_write=0, output=7, reasoning=3),
+                )
+            ],
+        )
+
+
+def _recorder(tmp_path, source=None):
+    warnings, notes = [], []
+    recorder = UsageRecorder(
+        tmp_path / "work" / "usage" / "ledger.jsonl",
+        source or StubSource(),
+        warn=warnings.append,
+        note=notes.append,
+    )
+    return recorder, warnings, notes
+
+
+def _ok(argv, **kwargs):
+    return subprocess.CompletedProcess(argv, 0, "# Review\n\n### [Major] Bug\n", "")
+
+
+def test_successful_review_writes_one_record(git_repo_with_base_and_head, tmp_path):
+    source = StubSource()
+    recorder, warnings, _ = _recorder(tmp_path, source)
+    _review(
+        git_repo_with_base_and_head,
+        _ok,
+        config_path=_config(tmp_path),
+        usage=recorder,
+        labels=RunLabels(source="poll", project="b2c/front", mr_iid=7),
+    )
+    records, _ = read_records(recorder.ledger_path)
+    assert len(records) == 1
+    record = records[0]
+    assert record["review.outcome"] == "succeeded"
+    assert (record["review.project"], record["review.mr.iid"]) == ("b2c/front", 7)
+    assert record["gen_ai.provider.name"] == "anthropic"
+    assert record["gen_ai.usage.input_tokens"] == 150
+    assert record["review.findings"]["major"] == 1
+    assert record["review.change.commits"] == 1
+    assert isinstance(record["review.duration_ms"], int)
+    assert record["review.quota"] is None
+    # collected while the worktree still existed
+    assert source.seen[0][1] is True
+    assert warnings == []
+
+
+def test_failed_harness_still_writes_a_failed_record(git_repo_with_base_and_head, tmp_path):
+    recorder, _, _ = _recorder(tmp_path)
+
+    def failing(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 3, "", "boom")
+
+    with pytest.raises(HarnessError):
+        _review(git_repo_with_base_and_head, failing, config_path=_config(tmp_path), usage=recorder)
+    records, _ = read_records(recorder.ledger_path)
+    assert [r["review.outcome"] for r in records] == ["failed"]
+    assert records[0]["review.findings"] is None
+    assert records[0]["gen_ai.usage.input_tokens"] == 150
+
+
+def test_quota_answers_land_in_the_record(git_repo_with_base_and_head, tmp_path):
+    recorder, _, _ = _recorder(tmp_path)
+    asked = []
+
+    def prompt(stage):
+        asked.append(stage)
+        return {"5h": 12, "week": 40} if stage == "before" else {"5h": 21, "week": 42}
+
+    _review(git_repo_with_base_and_head, _ok, config_path=_config(tmp_path), usage=recorder, quota_prompt=prompt)
+    assert asked == ["before", "after"]
+    record = read_records(recorder.ledger_path)[0][0]
+    assert record["review.quota"] == {
+        "provider": "anthropic",
+        "before": {"5h": 12, "week": 40},
+        "after": {"5h": 21, "week": 42},
+    }
+
+
+def test_broken_source_does_not_change_the_review(git_repo_with_base_and_head, tmp_path):
+    recorder, warnings, _ = _recorder(tmp_path, StubSource(error=RuntimeError("boom")))
+    result = _review(git_repo_with_base_and_head, _ok, config_path=_config(tmp_path), usage=recorder)
+    assert result.report.startswith("# Review")
+    assert warnings and "boom" in warnings[0]
+    assert _tmp_entries(tmp_path) == []
+
+
+def test_unwritable_ledger_does_not_change_the_review(git_repo_with_base_and_head, tmp_path):
+    recorder, warnings, _ = _recorder(tmp_path)
+    recorder.ledger_path.parent.parent.mkdir(parents=True, exist_ok=True)
+    recorder.ledger_path.parent.write_text("not a folder", encoding="utf-8")
+    result = _review(git_repo_with_base_and_head, _ok, config_path=_config(tmp_path), usage=recorder)
+    assert result.report.startswith("# Review")
+    assert any("журнал" in w for w in warnings)
+
+
+def test_format_problems_warn_once_per_process(git_repo_with_base_and_head, tmp_path):
+    usage = RunUsage(harness_name="opencode", format_problems=["версия 9.9 не проверена"])
+    recorder, warnings, _ = _recorder(tmp_path, StubSource(usage=usage))
+    for _ in range(2):
+        _review(git_repo_with_base_and_head, _ok, config_path=_config(tmp_path), usage=recorder)
+    assert len(warnings) == 1 and "9.9" in warnings[0]
+    assert recorder.suppressed == 1
+    assert len(read_records(recorder.ledger_path)[0]) == 2
+
+
+def test_prompt_is_identical_with_and_without_accounting(git_repo_with_base_and_head, tmp_path):
+    prompts = []
+
+    def capture(argv, **kwargs):
+        prompts.append((Path(kwargs["cwd"]).parent / "prompt.md").read_text(encoding="utf-8"))
+        return _ok(argv)
+
+    config_path = _config(tmp_path)
+    recorder, _, _ = _recorder(tmp_path)
+    _review(git_repo_with_base_and_head, capture, config_path=config_path)
+    _review(git_repo_with_base_and_head, capture, config_path=config_path, usage=recorder)
+    first, second = (p.replace(str(tmp_path), "") for p in prompts)
+    # only the per-run worktree path differs
+    import re
+
+    strip = lambda text: re.sub(r"tmp[\\/][^\\/\s]+[\\/]worktree", "tmp/RUN/worktree", text)  # noqa: E731
+    assert strip(first) == strip(second)
+
+
+def test_without_recorder_no_ledger_appears(git_repo_with_base_and_head, tmp_path):
+    _review(git_repo_with_base_and_head, _ok, config_path=_config(tmp_path))
+    assert not (tmp_path / "work" / "usage").exists()

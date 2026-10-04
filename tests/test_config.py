@@ -376,3 +376,70 @@ def test_best_effort_work_dir(tmp_path):
     broken.write_text("provider: [unclosed\n", encoding="utf-8")
     assert best_effort_work_dir(broken) == Path(DEFAULT_WORK_DIR)
     assert best_effort_work_dir(tmp_path / "missing.yaml") == Path(DEFAULT_WORK_DIR)
+
+
+# -- usage accounting (review-usage-accounting) -------------------------------
+
+from review_agent.config import DEFAULT_PRICE_CATALOG  # noqa: E402
+
+
+def test_usage_section_defaults_when_absent(tmp_path):
+    usage = load_config(_write_cfg(tmp_path)).usage
+    assert usage.enabled is True
+    assert usage.source == "opencode"
+    assert usage.session_list_command == ["opencode", "session", "list"]
+    assert usage.session_export_command == ["opencode", "session", "export", "{session_id}"]
+    assert usage.quota_windows == ["5h", "week"]
+    assert usage.price_catalog == DEFAULT_PRICE_CATALOG
+    assert usage.price_overrides == {}
+
+
+def test_usage_section_loads_values(tmp_path):
+    usage = load_config(
+        _write_cfg(
+            tmp_path,
+            usage={
+                "enabled": False,
+                "source": "none",
+                "session_list_command": ["opencode", "session", "list", "--standalone"],
+                "quota_windows": ["day"],
+                "price_catalog": "./prices.json",
+                "price_overrides": {
+                    "openai/gpt-5.6-terra": {
+                        "input_cost_per_token": 1.25e-06,
+                        "output_cost_per_token": 1e-05,
+                        "litellm_provider": "openai",  # unknown fields are kept and ignored
+                    }
+                },
+            },
+        )
+    ).usage
+    assert usage.enabled is False
+    assert usage.source == "none"
+    assert usage.session_list_command[-1] == "--standalone"
+    assert usage.quota_windows == ["day"]
+    assert usage.price_catalog == "./prices.json"
+    assert usage.price_overrides["openai/gpt-5.6-terra"]["input_cost_per_token"] == 1.25e-06
+
+
+@pytest.mark.parametrize(
+    "usage, message",
+    [
+        ("yes", "'usage' must be a mapping"),
+        ({"enabled": "yes"}, "usage.enabled"),
+        ({"source": "langfuse"}, "usage.source"),
+        ({"session_export_command": ["opencode", "session", "export"]}, "session_id"),
+        ({"session_list_command": []}, "usage.session_list_command"),
+        ({"quota_windows": []}, "usage.quota_windows"),
+        ({"quota_windows": ["5h", "5h"]}, "repeat"),
+        ({"price_catalog": ""}, "usage.price_catalog"),
+        ({"price_overrides": ["x"]}, "usage.price_overrides"),
+        ({"price_overrides": {"gpt-5": {"input_cost_per_token": 1}}}, "provider/model"),
+        ({"price_overrides": {"openai/gpt-5": {"input_cost_per_token": -1}}}, "non-negative"),
+        ({"price_overrides": {"openai/gpt-5": {"input_cost_per_token": True}}}, "non-negative"),
+        ({"price_overrides": {"openai/gpt-5": {"mode": "chat"}}}, "no price field"),
+    ],
+)
+def test_invalid_usage_section(tmp_path, usage, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(_write_cfg(tmp_path, usage=usage))

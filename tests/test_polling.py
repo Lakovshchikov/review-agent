@@ -1260,3 +1260,78 @@ def test_copies_untouched_when_lock_is_busy(fake_gitlab, tmp_path):
     )  # fmt: skip
     assert code == EXIT_NOT_STARTED
     assert copy.exists() and orphan.exists()
+
+
+# -- usage accounting (review-usage-accounting) --------------------------------
+
+
+def test_all_mode_passes_recorder_and_labels_without_quota_questions(setup):
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("one", head="a" * 40), ("b2c/other", 2): _mr("two", head="c" * 40)})
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_OK
+
+    assert len(recorder.reviews) == 2
+    first, second = recorder.reviews
+    assert first["usage"] is second["usage"] is not None
+    assert first["labels"].source == "poll"
+    assert (first["labels"].project, first["labels"].mr_iid) == ("b2c/front", 1)
+    assert (second["labels"].project, second["labels"].mr_iid) == ("b2c/other", 2)
+    assert first["quota_prompt"] is None and second["quota_prompt"] is None
+    assert first["usage"].ledger_path == setup["work"] / "usage" / "ledger.jsonl"
+
+
+def test_interactive_single_mr_gets_quota_questions(setup):
+    gitlab = FakeGitLab(_five_mrs())
+    recorder = Recorder()
+    output = []
+    readings = {}
+    recorder.during_review = lambda kwargs: readings.update(
+        before=kwargs["quota_prompt"]("before"), after=kwargs["quota_prompt"]("after")
+    )
+
+    # pick MR 2, then answer 5h/week before and after; "abc" and "101" are asked again
+    answers = ["2", "12", "abc", "40", "", "101", "42"]
+    assert _poll(setup, gitlab, recorder, answers=answers, output=output) == EXIT_OK
+
+    assert readings == {"before": {"5h": 12, "week": 40}, "after": {"week": 42}}
+    assert sum("от 0 до 100" in line for line in output) == 2
+    assert any("Замер квоты openai" in line for line in output)
+
+
+def test_disabled_accounting_passes_nothing(setup):
+    _edit_config(setup, lambda cfg: cfg.update(usage={"enabled": False}))
+    gitlab = FakeGitLab({("b2c/front", 1): _mr()})
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_OK
+    assert "usage" not in recorder.reviews[0]
+    assert not (setup["work"] / "usage").exists()
+
+
+def test_drift_warning_reaches_console_once_per_pass(setup):
+    gitlab = FakeGitLab({("b2c/front", 1): _mr(head="a" * 40), ("b2c/front", 2): _mr(head="b" * 40)})
+    recorder = Recorder()
+    recorder.during_review = lambda kwargs: kwargs["usage"].warn_once("версия OpenCode 9.9 не проверена")
+    output = []
+
+    assert _poll(setup, gitlab, recorder, review_all=True, output=output) == EXIT_OK
+
+    assert sum("9.9" in line for line in output) == 1
+    assert any(line.startswith("Предупреждение:") and "9.9" in line for line in output)
+    assert "9.9" in _pass_logs(setup)[-1].read_text(encoding="utf-8")
+
+
+def test_project_provider_is_used_for_quota_label(setup):
+    def change(cfg):
+        cfg["gitlab"]["projects"][0]["provider"] = {"name": "anthropic", "model": "x", "reasoning_effort": "high"}
+
+    _edit_config(setup, change)
+    gitlab = FakeGitLab({("b2c/front", 1): _mr()})
+    recorder = Recorder()
+    output = []
+    recorder.during_review = lambda kwargs: kwargs["quota_prompt"]("before")
+
+    assert _poll(setup, gitlab, recorder, answers=["1"], output=output) == EXIT_OK
+    assert recorder.reviews[0]["config"].provider.name == "anthropic"
+    assert any("Замер квоты anthropic" in line for line in output)
