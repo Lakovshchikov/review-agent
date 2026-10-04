@@ -1,7 +1,8 @@
 """The documentation keeps up with the CLI (see AGENTS.md section 11).
 
 README.md must mention every flag of every command and every parameter of
-scripts/register-task.ps1; relative links from README.md, AGENTS.md and
+scripts/register-task.ps1, its config example must load as a
+config; relative links from README.md, AGENTS.md and
 docs/*.md must point at files that exist.
 """
 
@@ -76,3 +77,14 @@ def test_relative_links_point_at_existing_files(document):
         if not (document.parent / path).exists():
             broken.append(target)
     assert not broken, f"{document.name}: broken relative links {broken}"
+
+
+def test_readme_config_example_is_a_valid_config(tmp_path):
+    from review_agent.config import load_config
+
+    block = re.search(r"## Конфигурация.*?```yaml\n(.*?)```", _readme(), re.DOTALL)
+    assert block, "README.md has no yaml example in the 'Конфигурация' section"
+    path = tmp_path / "config.yaml"
+    path.write_text(block.group(1), encoding="utf-8")
+    config = load_config(path)
+    assert config.gitlab is not None and config.gitlab.projects

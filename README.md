@@ -161,41 +161,65 @@ review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr
 ## Конфигурация
 
 `config.yaml` (образец — `config.example.yaml`). Полный справочник с
-типами и примерами — [docs/configuration.md](docs/configuration.md).
-Относительные пути считаются от текущей папки процесса.
+типами и проверками — [docs/configuration.md](docs/configuration.md).
+Относительные пути считаются от текущей папки процесса. Ниже все ключи;
+`# обяз.` — обязательный ключ, у остальных указано значение по умолчанию.
 
-| Ключ | По умолчанию | Смысл |
-| --- | --- | --- |
-| `provider.name` | обязателен | провайдер OpenCode: `openai`, `anthropic`, `ollama`… |
-| `provider.model` | обязателен | модель без префикса провайдера |
-| `provider.reasoning_effort` | обязателен (может быть `null`) | `low`/`medium`/`high`…; `null` — для моделей без вариантов |
-| `provider.api_key_env` | — | только для справки, движком не читается |
-| `harness.command` | обязателен | шаблон вызова OpenCode; берите из примера (`--standalone` и `--file "{prompt_file}"` обязательны) |
-| `harness.agent_name` | `reviewer` | имя генерируемого read-only агента |
-| `report.output_path` | обязателен | файл отчёта ручного режима, `{run_id}` подставляется |
-| `skills` | `[]` | абсолютные пути к knowledge-skill файлам (подсказки агенту, не ограничения) |
-| `safety.denied_bash_patterns` | список из примера | запрещённые агенту shell-команды (denylist) |
-| `safety.output_language` | `ru` | пишется только в safety-note; язык отчёта — русский, задан в промпте |
-| `storage.work_dir` | `./.review-agent` | куда review-agent пишет всё |
-| `storage.retention_days` | `7` | срок `logs/`, `dry-run/`, `debug/`; `null` — бессрочно |
-| `storage.repo_retention_days` | `30` | срок неиспользуемого кэш-клона; `null` — бессрочно |
-| `usage.enabled` | `true` | журнал расхода и вопросы о квоте |
-| `usage.source` | `opencode` | `opencode` / `none` |
-| `usage.session_list_command` | `[opencode, session, list]` | список сессий харнесса |
-| `usage.session_export_command` | `[opencode, session, export, "{session_id}"]` | экспорт сессии |
-| `usage.quota_windows` | `[5h, week]` | окна лимита подписки |
-| `usage.price_catalog` | справочник LiteLLM на GitHub | URL или путь к ценам |
-| `usage.price_overrides` | `{}` | свои цены `"<provider>/<model>": {input_cost_per_token: …}` |
-| `gitlab.hostname` | обязателен для `poll` | хост GitLab |
-| `gitlab.reviewers` | — | username'ы; MR берётся, если любой из них — ревьюер |
-| `gitlab.review_drafts` | `false` | ревьюить draft-MR |
-| `gitlab.min_report_chars` | `200` | более короткий отчёт не публикуется |
-| `gitlab.claim_ttl_minutes` | `240` | когда claim считается брошенным; ≥ лимита задачи |
-| `gitlab.projects[].path` | обязателен | `group/project` |
-| `gitlab.projects[].local_repo` | — | свой клон; без него — кэш-клон в `<work_dir>/repos/` |
-| `gitlab.projects[].remote` | `origin` | remote в `local_repo` (только вместе с ним) |
-| `gitlab.projects[].enabled` | `true` | `false` — проект не опрашивается |
-| `gitlab.projects[].reviewers`, `review_drafts`, `provider`, `skills` | глобальные | переопределения проекта; заменяют глобальное целиком |
+```yaml
+provider:                         # модель ревью (обяз.)
+  name: openai                    # обяз.; провайдер OpenCode: openai, anthropic, ollama…
+  model: gpt-5                    # обяз.; без префикса провайдера
+  reasoning_effort: medium        # обяз.; low/medium/high…; null — у модели нет вариантов (локальные)
+  api_key_env: OPENAI_API_KEY     # только для справки, не читается; авторизация — opencode auth login
+
+harness:                          # вызов OpenCode (обяз.)
+  command: [opencode, run, --standalone, --agent, "{agent}", --model, "{model}",
+            --file, "{prompt_file}", "Внимательно прочитай вложенный файл целиком и строго следуй его инструкциям."]
+                                  # обяз.; берите из примера: --standalone и --file обязательны
+  agent_name: reviewer            # = reviewer; имя генерируемого read-only агента
+
+report:
+  output_path: ./reports/review-{run_id}.md   # обяз.; отчёт ручного режима, {run_id} подставляется
+
+skills: []                        # = []; АБСОЛЮТНЫЕ пути к knowledge-skill файлам (подсказки, не ограничения)
+
+safety:
+  denied_bash_patterns: ["npm *", "rm *", "*test*"]   # = список из config.example.yaml; запрещённые агенту команды, заменяет список целиком
+  output_language: ru             # = ru; пишется только в safety-note, отчёт всегда на русском
+
+storage:
+  work_dir: ./.review-agent       # = ./.review-agent; сюда review-agent пишет всё
+  retention_days: 7               # = 7; срок logs/, dry-run/, debug/; null — бессрочно
+  repo_retention_days: 30         # = 30; срок неиспользуемого кэш-клона; null — бессрочно
+
+usage:                            # учёт расхода
+  enabled: true                   # = true; false — ни журнала, ни вопросов о квоте
+  source: opencode                # = opencode; opencode | none
+  session_list_command: [opencode, session, list]                    # = это значение; + --standalone, если сессии не находятся
+  session_export_command: [opencode, session, export, "{session_id}"]  # = это значение; {session_id} обязателен
+  quota_windows: [5h, week]       # = [5h, week]; окна лимита подписки для ручного замера
+  price_catalog: https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+                                  # = это значение; URL или путь к ценам LiteLLM
+  price_overrides:                # = {}; свои цены, заменяют запись справочника целиком
+    openai/my-model: {input_cost_per_token: 0.00000125, output_cost_per_token: 0.00001}
+
+gitlab:                           # только для poll
+  hostname: git.example.local     # обяз.
+  reviewers: [ai-reviewer]        # MR берётся, если любой из них — ревьюер; можно не задавать, если есть у каждого проекта
+  review_drafts: false            # = false; ревьюить draft-MR
+  min_report_chars: 200           # = 200; более короткий отчёт не публикуется
+  claim_ttl_minutes: 240          # = 240; claim старше считается брошенным; ≥ лимита задачи Task Scheduler
+  projects:                       # обяз., не пустой
+    - path: group/project         # обяз.; без local_repo — кэш-клон в <work_dir>/repos/
+    - path: group/other
+      local_repo: C:/repos/other  # свой клон; review-agent только делает в нём fetch
+      remote: origin              # = origin; только вместе с local_repo
+      enabled: true               # = true; false — проект не опрашивается
+      reviewers: [ai-reviewer, lead]   # переопределения проекта: заменяют глобальное целиком
+      review_drafts: true
+      provider: {name: openai, model: gpt-5, reasoning_effort: high}   # весь блок, со своим reasoning_effort
+      skills: []                  # [] — без skill'ов при непустом глобальном списке
+```
 
 ## Рабочая папка
 
