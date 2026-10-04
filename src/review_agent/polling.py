@@ -46,6 +46,7 @@ from review_agent.config import (
     effective_settings,
     load_config,
 )
+from review_agent.file_links import link_file_references, project_web_url
 from review_agent.gitlab import GitLabClient, GitLabError, MRCandidate, MRMetadata, NoteNotFound
 from review_agent.harness import HarnessError, build_model_string
 from review_agent.housekeeping import (
@@ -61,6 +62,7 @@ from review_agent.passlog import PassLog, pass_log
 from review_agent.proc import no_window_flags
 from review_agent.pipeline import ReviewResult, run_review
 from review_agent.usage_ledger import QuotaPrompt, RunLabels, UsageRecorder, make_recorder
+from review_agent.worktree import list_tree_paths
 from review_agent.quota_prompt import make_quota_prompt
 from review_agent.repo_source import RepoSources, expire_repos, managed_copies, slug
 from review_agent.publishing import (
@@ -165,6 +167,9 @@ class _PassContext:
     # Interactive single-MR pass only: builds the quota questions for a
     # provider name (quota_prompt.py); None in --all mode.
     quota_factory: Callable[[str], QuotaPrompt] | None = None
+    # Files and directories of a commit, for linking the report's file
+    # references (worktree.list_tree_paths; stubbed in tests).
+    tree_paths_fn: Callable[[Path, str], set[str]] = list_tree_paths
 
 
 # -- the pass ----------------------------------------------------------------
@@ -333,7 +338,7 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
             return outcome
 
         body = format_comment(
-            report=result.report,
+            report=_link_files(result, refs, meta, project, prepared.path, ctx),
             head_sha=refs.head_sha,
             base_sha=refs.base_sha,
             model=build_model_string(item.settings.config.provider),
@@ -384,6 +389,49 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
         _finish_mr_tmp(mr_tmp, debug_dir, outcome, ctx)
 
 
+def _link_files(
+    result: ReviewResult,
+    refs: Any,
+    meta: MRMetadata,
+    project: GitLabProjectConfig,
+    repo_path: Path,
+    ctx: _PassContext,
+) -> str:
+    """The report with file references turned into GitLab links (file_links.py).
+
+    Links are a convenience: whatever fails here, the report is still
+    published - with what could be rewritten, or as it was.
+    """
+    where = f"{project.path} !{meta.iid}"
+    paths: dict[str, set[str] | None] = {}
+    for name, sha in (("head", refs.head_sha), ("base", refs.base_sha)):
+        try:
+            paths[name] = ctx.tree_paths_fn(repo_path, sha)
+        except Exception as exc:  # noqa: BLE001
+            ctx.log.warning(
+                f"{where}: не удалось получить файлы коммита {sha[:12]} для ссылок "
+                f"в отчёте ({exc}); пути в inline-коде останутся без ссылок"
+            )
+            paths[name] = None
+    # Without head's list nothing can be checked; without base's only
+    # files deleted by the MR go unlinked.
+    head_paths = paths["head"]
+    base_paths = None if head_paths is None else (paths["base"] or set())
+    try:
+        return link_file_references(
+            result.report,
+            worktree_path=result.worktree_path,
+            project_url=project_web_url(meta.web_url, ctx.config.gitlab.hostname, project.path),
+            head_sha=refs.head_sha,
+            base_sha=refs.base_sha,
+            head_paths=head_paths,
+            base_paths=base_paths,
+        )
+    except Exception as exc:  # noqa: BLE001
+        ctx.log.warning(f"{where}: не удалось переписать ссылки в отчёте ({exc}); опубликован как есть")
+        return result.report
+
+
 def _keep_harness_log(stderr: str, name: str, outcome: Outcome, ctx: _PassContext) -> None:
     """A failed review's harness stderr is the one transient file worth keeping."""
     try:
@@ -427,6 +475,7 @@ def run_poll(
     is_alive: Callable[[int], bool] = pid_alive,
     is_git_repo: Callable[[Path], bool] = _is_git_repo,
     now_fn: Callable[[], datetime] = _utc_now,
+    tree_paths_fn: Callable[[Path, str], set[str]] = list_tree_paths,
 ) -> int:
     """Run one polling pass and return the process exit code."""
     if repo_sources_factory is None:
@@ -488,6 +537,7 @@ def run_poll(
                         review_fn=review_fn,
                         repo_sources=repo_sources_factory(config, work_dir, log),
                         now_fn=now_fn,
+                        tree_paths_fn=tree_paths_fn,
                         usage=make_recorder(config, warn=log.warning, note=log.file_only),
                         quota_factory=(
                             None

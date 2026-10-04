@@ -35,6 +35,9 @@ class ReviewResult:
     report: str
     harness_stderr: str
     run_id: str
+    # Where the run's worktree was (already deleted on return): the report
+    # refers to files by this absolute path, publishing rewrites it.
+    worktree_path: Path | None = None
 
 
 def run_review(
@@ -153,7 +156,10 @@ def run_review(
             stderr_file.write_text(result.stderr, encoding="utf-8")
             (run_dir / "report.md").write_text(result.stdout, encoding="utf-8")
             return ReviewResult(
-                report=result.stdout, harness_stderr=result.stderr, run_id=handle.run_id
+                report=result.stdout,
+                harness_stderr=result.stderr,
+                run_id=handle.run_id,
+                worktree_path=handle.path,
             )
     finally:
         # The worktree itself is already gone (managed_worktree); now the

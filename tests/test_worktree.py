@@ -1,13 +1,16 @@
 import subprocess
 from pathlib import Path
 
+import pytest
 from conftest import has_commit
 
 from review_agent.worktree import (
     cleanup_orphaned_worktrees,
     create_worktree,
     fetch_refspecs,
+    WorktreeError,
     list_registered_worktrees,
+    list_tree_paths,
     managed_worktree,
 )
 
@@ -195,3 +198,31 @@ def test_worktree_add_skips_lfs_smudge(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", fake_run)
     create_worktree(Path("repo"), "a" * 40, tmp_path)
     assert captured[("worktree", "add")]["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"
+
+
+def test_list_tree_paths_lists_files_and_directories(git_repo_with_base_and_head):
+    fixture = git_repo_with_base_and_head
+    repo = fixture["repo"]
+    nested = repo / "src" / "Страница группы"
+    nested.mkdir(parents=True)
+    (nested / "my page.tsx").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "nested"], check=True)
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    paths = list_tree_paths(repo, sha)
+
+    assert paths == {
+        "file.txt",
+        "src",
+        "src/Страница группы",
+        "src/Страница группы/my page.tsx",
+    }
+    assert list_tree_paths(repo, fixture["base_sha"]) == {"file.txt"}
+
+
+def test_list_tree_paths_unknown_commit_raises(git_repo_with_base_and_head):
+    with pytest.raises(WorktreeError):
+        list_tree_paths(git_repo_with_base_and_head["repo"], "0" * 40)

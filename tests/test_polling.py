@@ -202,8 +202,9 @@ def _edit_config(setup, change):
 
 
 class Recorder:
-    def __init__(self, report=GOOD_REPORT, fail_for=()):
+    def __init__(self, report=GOOD_REPORT, fail_for=(), worktree_path=None):
         self.report = report
+        self.worktree_path = worktree_path
         self.fail_for = set(fail_for)
         self.reviews = []
         self.prepares = []
@@ -220,7 +221,9 @@ class Recorder:
             (kwargs["debug_dir"] / "prompt.md").write_text("prompt", encoding="utf-8")
         if kwargs["head_sha"] in self.fail_for:
             raise HarnessError("harness exploded", stderr="трасса упавшего харнесса")
-        return ReviewResult(report=self.report, harness_stderr="trace", run_id="r1")
+        return ReviewResult(
+            report=self.report, harness_stderr="trace", run_id="r1", worktree_path=self.worktree_path
+        )
 
     def sources(self, config, work_dir, log):
         recorder = self
@@ -247,6 +250,7 @@ def _poll(setup, gitlab, recorder, *, answers=(), tty=True, output=None, **kwarg
         return answers.pop(0)
 
     kwargs.setdefault("orphan_cleanup_fn", lambda repo, tmp: None)
+    kwargs.setdefault("tree_paths_fn", lambda repo, sha: set())
     return run_poll(
         config_path=setup["config"],
         client_factory=gitlab,
@@ -517,6 +521,86 @@ def test_dry_run_posts_nothing_and_saves_comment(setup):
     assert len(comments) == 1
     assert build_marker("a" * 40) in comments[0].read_text(encoding="utf-8")
     assert any("[dry-run]" in line for line in output)
+
+
+# -- file links --------------------------------------------------------------
+
+LINK_WT = "E:/agent/.review-agent/tmp/r1/worktree"
+LINK_REPORT = GOOD_REPORT + (
+    f"\n### Major — x\n[`src/a.ts:13`]({LINK_WT}/src/a.ts#L13)\n\nСм. `src/b.ts:5-7`.\n"
+)
+LINK_BLOB = "https://gitlab.local/b2c/front/-/blob/" + "a" * 40
+
+
+def _link_mr():
+    return FakeGitLab({("b2c/front", 1): _mr(head="a" * 40)})
+
+
+def test_published_comment_links_files_in_the_reviewed_commit(setup):
+    gitlab = _link_mr()
+    seen = []
+
+    def tree_paths(repo, sha):
+        seen.append((repo, sha))
+        return {"src", "src/a.ts", "src/b.ts"}
+
+    recorder = Recorder(report=LINK_REPORT, worktree_path=Path(LINK_WT))
+    assert _poll(setup, gitlab, recorder, review_all=True, tree_paths_fn=tree_paths) == EXIT_OK
+
+    body = gitlab.published[0][2]
+    assert f"[`src/a.ts:13`]({LINK_BLOB}/src/a.ts#L13)" in body
+    assert f"[`src/b.ts:5-7`]({LINK_BLOB}/src/b.ts#L5-7)" in body
+    assert "review-agent/tmp" not in body
+    # Both commits listed in the project's prepared repository.
+    assert seen == [(setup["tmp"] / "clone-a", "a" * 40), (setup["tmp"] / "clone-a", "b" * 40)]
+
+
+def test_dry_run_comment_has_the_same_links(setup):
+    recorder = Recorder(report=LINK_REPORT, worktree_path=Path(LINK_WT))
+    tree_paths = lambda repo, sha: {"src/a.ts", "src/b.ts"}  # noqa: E731
+    assert _poll(
+        setup, _link_mr(), recorder, review_all=True, dry_run=True, tree_paths_fn=tree_paths
+    ) == EXIT_OK
+
+    text = next((setup["work"] / "dry-run").glob("*.comment.md")).read_text(encoding="utf-8")
+    assert f"({LINK_BLOB}/src/a.ts#L13)" in text
+    assert f"({LINK_BLOB}/src/b.ts#L5-7)" in text
+    assert "review-agent/tmp" not in text
+
+
+def test_file_list_failure_still_publishes_with_worktree_links(setup):
+    from review_agent.worktree import WorktreeError
+
+    def broken(repo, sha):
+        raise WorktreeError("git ls-tree exploded")
+
+    gitlab = _link_mr()
+    output = []
+    recorder = Recorder(report=LINK_REPORT, worktree_path=Path(LINK_WT))
+    assert _poll(
+        setup, gitlab, recorder, review_all=True, tree_paths_fn=broken, output=output
+    ) == EXIT_OK
+
+    body = gitlab.published[0][2]
+    assert f"[`src/a.ts:13`]({LINK_BLOB}/src/a.ts#L13)" in body
+    assert "См. `src/b.ts:5-7`." in body  # unchecked inline code is left alone
+    assert "review-agent/tmp" not in body
+    log = _pass_logs(setup)[-1].read_text(encoding="utf-8")
+    assert "b2c/front !1" in log and "git ls-tree exploded" in log
+
+
+def test_link_rewrite_crash_publishes_the_report_as_is(setup, monkeypatch):
+    import review_agent.polling as polling
+
+    def boom(*args, **kwargs):
+        raise ValueError("regex blew up")
+
+    monkeypatch.setattr(polling, "link_file_references", boom)
+    gitlab = _link_mr()
+    assert _poll(setup, gitlab, Recorder(report=LINK_REPORT), review_all=True) == EXIT_OK
+
+    assert LINK_REPORT.strip() in gitlab.published[0][2]
+    assert "regex blew up" in _pass_logs(setup)[-1].read_text(encoding="utf-8")
 
 
 # -- one pass at a time ------------------------------------------------------
