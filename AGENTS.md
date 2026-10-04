@@ -279,7 +279,7 @@ review-agent --help         # ручное ревью диапазона ком�
 review-agent poll --help    # проход опроса GitLab
 review-agent poll --dry-run # первый безопасный прогон на реальном GitLab
 review-agent poll --all --debug   # проход без вопросов, артефакты прогонов — в <work_dir>/debug/
-review-agent usage --by model     # сводка расхода: токены, API-эквивалент $, доля лимитов
+review-agent usage                # сводка расхода за всё время (--by model, --wide, --format csv)
 ```
 
 ```powershell

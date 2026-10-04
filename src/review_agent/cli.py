@@ -5,7 +5,7 @@
   with no GitLab calls at all.
 - `review-agent poll [--all] [--dry-run] [--debug]` - one polling pass
   against GitLab (see polling.py). The only command that talks to GitLab.
-- `review-agent usage [--since] [--until] [--by] [--format]` - summary of
+- `review-agent usage [--since] [--until] [--by] [--format] [--wide]` - summary of
   the usage ledger (usage_summary.py); reads the ledger and downloads the
   price catalog, nothing else.
 
@@ -140,10 +140,18 @@ def build_usage_arg_parser() -> argparse.ArgumentParser:
             "and the share of subscription limits (measured or estimated)."
         ),
     )
-    parser.add_argument("--since", default="7d", help="Start: '<N>d' (last N days) or YYYY-MM-DD (default: 7d).")
+    parser.add_argument(
+        "--since", default=None, help="Start: '<N>d' (last N days) or YYYY-MM-DD (default: the whole ledger)."
+    )
     parser.add_argument("--until", default=None, help="End date YYYY-MM-DD, inclusive (default: now).")
     parser.add_argument("--by", choices=GROUPINGS, default="review", help="Grouping (default: review).")
     parser.add_argument("--format", choices=FORMATS, default="table", help="Output format (default: table).")
+    parser.add_argument(
+        "--wide",
+        action="store_true",
+        help="Table with every column (tokens by kind, change size, findings, price source...). "
+        "CSV and JSON always have every column.",
+    )
     parser.add_argument(
         "--config",
         default="config.yaml",
@@ -177,7 +185,7 @@ def usage_main(argv: list[str], *, fetch=None) -> int:
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 2
     try:
-        since = parse_since(args.since)
+        since = parse_since(args.since) if args.since else None
         until = parse_until(args.until) if args.until else None
     except PeriodError as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
@@ -199,9 +207,10 @@ def usage_main(argv: list[str], *, fetch=None) -> int:
         skipped_lines=skipped,
     )
     if not summary.rows and args.format == "table":
-        _print_safe(f"Нет данных за период ({args.since}{' — ' + args.until if args.until else ''}).")
+        period = f"{args.since or 'всё время'}{' — ' + args.until if args.until else ''}"
+        _print_safe(f"Нет данных за период ({period}).")
         return 0
-    _print_safe(render(summary, args.by, args.format))
+    _print_safe(render(summary, args.by, args.format, wide=args.wide))
     return 0
 
 

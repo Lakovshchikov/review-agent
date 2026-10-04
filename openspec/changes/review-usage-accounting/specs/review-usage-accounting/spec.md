@@ -148,7 +148,7 @@ When exactly one MR or commit range is reviewed from an interactive console (pol
 - **THEN** the system SHALL NOT ask any quota question
 
 ### Requirement: Usage summary command
-The system SHALL provide a command that summarizes the usage ledger for a chosen period, grouped by review (default), MR, model, or day, showing review count, tokens by kind, durations, change size, findings, API-equivalent cost and subscription share, as a table, CSV, or JSON. It SHALL include every review record of the period, whether or not it has quota readings.
+The system SHALL provide a command that summarizes the usage ledger, for the whole ledger by default or for a chosen period, grouped by review (default), MR, model, or day, showing review count, tokens, durations, change size, findings, API-equivalent cost and subscription share, as a short table by default, a full table on request, CSV, or JSON. It SHALL include every review record of the period, whether or not it has quota readings.
 
 #### Scenario: Weekly summary by model
 - **WHEN** the user requests the summary for the last 7 days grouped by model
@@ -157,6 +157,10 @@ The system SHALL provide a command that summarizes the usage ledger for a chosen
 #### Scenario: Records without usage
 - **WHEN** the period contains review records without token counts
 - **THEN** the summary SHALL count those reviews and SHALL report how many lacked usage data instead of treating them as zero-cost
+
+#### Scenario: Default period and table
+- **WHEN** the user runs the summary without period or format options
+- **THEN** the output SHALL cover every record in the ledger and SHALL be a short table with one total token count per row, while the full table, CSV and JSON SHALL show tokens by kind
 
 #### Scenario: Empty or missing ledger
 - **WHEN** the ledger is empty or does not exist

@@ -207,7 +207,7 @@ def apply_shares(rows: list[ReviewRow], windows: list[str]) -> dict[tuple, Coeff
 
 @dataclasses.dataclass
 class Summary:
-    since: datetime
+    since: datetime | None  # None = the whole ledger
     until: datetime | None
     rows: list[ReviewRow]
     windows: list[str]
@@ -237,7 +237,7 @@ def summarize(
     records: list[dict[str, Any]],
     *,
     prices: PriceBook,
-    since: datetime,
+    since: datetime | None,
     until: datetime | None,
     configured_windows: list[str],
     skipped_lines: int = 0,
@@ -245,7 +245,9 @@ def summarize(
     in_period = []
     for record in records:
         moment = _record_time(record)
-        if moment is None or moment < since or (until is not None and moment >= until):
+        if moment is None or (since is not None and moment < since):
+            continue
+        if until is not None and moment >= until:
             continue
         in_period.append(record)
     rows = build_rows(in_period, prices)
@@ -372,7 +374,7 @@ def group_rows(summary: Summary, by: str) -> list[dict[str, Any]]:
 def header_lines(summary: Summary) -> list[str]:
     until = summary.until.strftime("%Y-%m-%d") if summary.until else "сейчас"
     lines = [
-        f"Период: {summary.since.strftime('%Y-%m-%d %H:%M')} — {until}",
+        f"Период: {summary.since.strftime('%Y-%m-%d %H:%M') if summary.since else 'всё время'} — {until}",
         f"Ревью: {len(summary.rows)}; без данных о расходе: {summary.without_usage}; "
         f"без цены (не вошли в сумму $): {summary.unpriced}; "
         f"с проблемами формата харнесса: {summary.with_format_problems}",
@@ -403,13 +405,54 @@ def header_lines(summary: Summary) -> list[str]:
     return lines
 
 
-def render(summary: Summary, by: str, fmt: str) -> str:
+# Short console table (default): cost at a glance. Every column of
+# group_rows() is in --wide, CSV and JSON.
+_KEY_COLUMNS = {
+    "review": ["when", "mr", "model", "effort"],
+    "mr": ["project", "mr"],
+    "model": ["model", "effort"],
+    "day": ["day"],
+}
+_LEGEND = (
+    "tokens_k — все токены, тыс. (вход с кэшем + выход + reasoning); min — время ревью; "
+    "lines — изменённые строки MR; B/M/m — находки Blocker/Major/Minor; usd — API-эквивалент; "
+    "<окно> % — доля лимита подписки (изм. — измерено, оц. n=N — оценка по N замерам). "
+    "Все колонки: --wide или --format csv."
+)
+
+
+def _short_note(note: str) -> str:
+    return note.replace("измерено", "изм.").replace("оценка", "оц.").replace("замеров ", "n=")
+
+
+def _compact(line: dict[str, Any], by: str, windows: list[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in _KEY_COLUMNS[by]:
+        out[key] = str(line.get("time") or "")[:16].replace("T", " ") if key == "when" else line.get(key)
+    if by != "review":
+        out["reviews"] = line["reviews"]
+    parts = [line.get(k) for k in ("fresh_input", "cache_read", "cache_write", "output", "reasoning")]
+    known = [p for p in parts if isinstance(p, int)]
+    out["tokens_k"] = round(sum(known) / 1000, 1) if known else None
+    out["min"] = line.get("duration_min")
+    out["lines"] = line.get("lines")
+    findings = [line.get(k) for k in ("blocker", "major", "minor")]
+    out["B/M/m"] = "/".join(str(f or 0) for f in findings) if any(f is not None for f in findings) else ""
+    out["usd"] = line.get("cost_usd")
+    for window in windows:
+        value = line.get(f"share_{window}_pct")
+        note = _short_note(line.get(f"share_{window}_note") or "")
+        out[f"{window} %"] = f"{_cell(value)} ({note})" if value is not None else note
+    return out
+
+
+def render(summary: Summary, by: str, fmt: str, *, wide: bool = False) -> str:
     table = group_rows(summary, by)
     if fmt == "json":
         return json.dumps(
             {
                 "period": {
-                    "since": summary.since.isoformat(timespec="seconds"),
+                    "since": summary.since.isoformat(timespec="seconds") if summary.since else None,
                     "until": summary.until.isoformat(timespec="seconds") if summary.until else None,
                 },
                 "reviews": len(summary.rows),
@@ -434,7 +477,12 @@ def render(summary: Summary, by: str, fmt: str) -> str:
         writer.writeheader()
         writer.writerows(table)
         return buffer.getvalue()
-    return "\n".join([*header_lines(summary), "", _text_table(table)])
+    if not wide:
+        table = [_compact(line, by, summary.windows) for line in table]
+    lines = [*header_lines(summary), ""]
+    if not wide:
+        lines += [_LEGEND, ""]
+    return "\n".join([*lines, _text_table(table)])
 
 
 def _cell(value: Any) -> str:

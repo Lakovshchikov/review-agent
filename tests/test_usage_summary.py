@@ -169,3 +169,37 @@ def test_period_parsing():
     assert parse_until("2026-10-03") == datetime(2026, 10, 4)
     with pytest.raises(PeriodError):
         parse_since("week")
+
+
+def test_default_table_is_compact_and_wide_has_everything():
+    s = _summary([rec("a", quota={"provider": "openai", "before": {"week": 40}, "after": {"week": 42}})])
+    compact = render(s, "review", "table")
+    header = next(line for line in compact.splitlines() if line.startswith("when"))
+    assert header.split() == ["when", "mr", "model", "effort", "tokens_k", "min", "lines", "B/M/m", "usd", "5h", "%", "week", "%"]
+    assert "2 (изм.)" in compact and "0/1/1" in compact
+    assert "--wide" in compact  # the legend points to the full table
+    wide = render(s, "review", "table", wide=True)
+    assert "fresh_input" in wide and "price_source" in wide and "share_week_note" in wide
+
+
+def test_compact_estimate_note_and_group_count():
+    s = _summary(
+        [
+            rec("m", cost_usd=8, quota={"provider": "openai", "before": {"week": 40}, "after": {"week": 44}}),
+            rec("o", cost_usd=2),
+        ]
+    )
+    by_review = render(s, "review", "table")
+    assert "1 (оц., n=1)" in by_review
+    by_model = render(s, "model", "table")
+    assert "reviews" in by_model.splitlines()[-3]
+
+
+def test_whole_ledger_when_no_since():
+    from review_agent.usage_prices import Catalog, PriceBook
+
+    book = PriceBook(Catalog(entries=PRICES, origin="test", as_of=None), {})
+    records = [rec("old", time="2020-01-01T10:00:00"), rec("new")]
+    s = summarize(records, prices=book, since=None, until=None, configured_windows=["week"])
+    assert len(s.rows) == 2
+    assert "Период: всё время" in render(s, "review", "table")

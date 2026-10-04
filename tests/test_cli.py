@@ -359,3 +359,15 @@ def test_usage_bad_period_is_an_error(tmp_path, capsys):
     from review_agent import cli
 
     assert cli.usage_main(["--config", str(_manual_config(tmp_path)), "--since", "week"]) == 2
+
+
+def test_usage_defaults_to_the_whole_ledger_and_compact_table(tmp_path, capsys):
+    from review_agent import cli
+
+    _write_ledger(tmp_path, [_rec("old", time="2020-01-01T10:00:00+03:00"), _rec("new")])
+    assert cli.usage_main(["--config", str(_manual_config(tmp_path))], fetch=lambda url: PRICES) == 0
+    out = capsys.readouterr().out
+    assert "Ревью: 2" in out and "всё время" in out
+    assert "tokens_k" in out and "fresh_input" not in out
+    assert cli.usage_main(["--config", str(_manual_config(tmp_path)), "--wide"], fetch=lambda url: PRICES) == 0
+    assert "fresh_input" in capsys.readouterr().out
