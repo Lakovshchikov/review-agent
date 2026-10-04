@@ -169,7 +169,7 @@ Write-Host "  интервал:       каждые $IntervalMinutes мин, бе
 Write-Host "  пользователь:   $user ($logonType)"
 if ($LogonDelayMinutes -gt 0) { Write-Host "  при входе:      проход через $LogonDelayMinutes мин после входа в Windows" }
 Write-Host ""
-Write-Host "Как смотреть результат (подробно — README, «Как следить за задачей»):"
+Write-Host "Как смотреть результат (подробно — docs\scheduling.md, «Как следить за задачей»):"
 Write-Host "  Get-ScheduledTaskInfo -TaskName $TaskName   # LastTaskResult: 0 ок, 1 какой-то MR упал, 2 проход не стартовал"
 Write-Host "  taskschd.msc                                 # Планировщик заданий: состояние, журнал, Выполнить/Завершить"
 Write-Host "  логи проходов: <storage.work_dir>\logs\ (по умолчанию $WorkingDirectory\.review-agent\logs)"

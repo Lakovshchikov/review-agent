@@ -3,7 +3,7 @@
 - `review-agent --repo ... --base ... --head ...` - manual review: one
   full review (checkout, harness invocation, report, cleanup) and exit,
   with no GitLab calls at all.
-- `review-agent poll [--all] [--dry-run] [--debug]` - one polling pass
+- `review-agent poll [--all] [--dry-run] [--include-closed] [--debug]` - one polling pass
   against GitLab (see polling.py). The only command that talks to GitLab.
 - `review-agent usage [--since] [--until] [--by] [--format] [--wide]` - summary of
   the usage ledger (usage_summary.py); reads the ledger and downloads the

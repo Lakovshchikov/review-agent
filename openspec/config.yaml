@@ -54,24 +54,18 @@ context: |
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always state what is out of scope
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+# Правило актуализации документации живёт в AGENTS.md п.11 — здесь только
+# отсылки к нему, чтобы оно попадало в инструкции артефактов и операций.
+rules:
+  proposal:
+    - "В Impact перечисли документы, которые затронет change, по таблице AGENTS.md п.11 (README.md, docs/*.md, AGENTS.md, config.example.yaml, openspec/config.yaml), или явно напиши, что документация не затронута и почему."
+  tasks:
+    - "Каждая группа задач включает обновление документации для своих изменений по таблице AGENTS.md п.11 (README.md, docs/*.md, AGENTS.md п.7/п.10, config.example.yaml) — не откладывай документацию в отдельную последнюю группу. Если документация не затронута, запиши это явно."
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+operations:
+  apply:
+    guidance:
+      - "Перед тем как отметить последнюю задачу, сверь документацию с изменениями по AGENTS.md п.11 и прогони pytest tests/test_docs.py."
+  archive:
+    guidance:
+      - "При архивации обнови AGENTS.md п.7 (строка таблицы change'ей, бэклог) и статус дорожной карты в openspec/config.yaml. Не архивируй change, если документация не актуализирована по AGENTS.md п.11."
