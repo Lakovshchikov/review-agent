@@ -19,14 +19,16 @@ Protection against reviewing one MR twice, in layers:
 - one more look for a finished review right before publishing.
 
 Every pass writes its own log (passlog.py) and leaves nothing in
-`<work_dir>/tmp/` behind (housekeeping.py).
+`<work_dir>/tmp/` behind (housekeeping.py). A project without `local_repo`
+is reviewed against a managed copy in `<work_dir>/repos/` (repo_source.py),
+cloned on first need and kept across passes until unused for
+`storage.repo_retention_days`.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import os
-import re
 import subprocess
 import sys
 import time
@@ -58,6 +60,7 @@ from review_agent.lock import LOCK_FILE_NAME, PollLockBusy, pid_alive, poll_lock
 from review_agent.passlog import PassLog, pass_log
 from review_agent.proc import no_window_flags
 from review_agent.pipeline import ReviewResult, run_review
+from review_agent.repo_source import RepoSources, expire_repos, managed_copies, slug
 from review_agent.publishing import (
     format_claim_comment,
     format_comment,
@@ -153,7 +156,7 @@ class _PassContext:
     debug: bool
     log: PassLog
     review_fn: Callable[..., ReviewResult]
-    fetch_fn: Callable[[Path, str, str], None]
+    repo_sources: RepoSources
     now_fn: Callable[[], datetime]
 
 
@@ -171,10 +174,6 @@ def _is_git_repo(path: Path) -> bool:
         creationflags=no_window_flags(),
     )
     return result.returncode == 0
-
-
-def _slug(project_path: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", project_path).strip("-")
 
 
 def _utc_now() -> datetime:
@@ -229,7 +228,7 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
     client = ctx.client
     outcome = Outcome(project=project.path, iid=meta.iid, status="failed", web_url=meta.web_url)
     moment = stamp()
-    name = f"{moment}-{_slug(project.path)}-{meta.iid}"
+    name = f"{moment}-{slug(project.path)}-{meta.iid}"
     # Per-MR transient folder for publication request bodies; deleted (or
     # copied to debug/) in `finally` like the engine's own run folder.
     mr_tmp = ctx.work_dir.tmp / f"mr-{name}"
@@ -281,20 +280,23 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
                 outcome.reason = f"другой проход взял MR раньше (claim #{earlier[0].note_id})"
                 return outcome  # our claim is deleted in `finally`
 
-        local_repo = Path(project.local_repo)
-        try:
-            ctx.fetch_fn(local_repo, project.remote, f"refs/merge-requests/{meta.iid}/head")
-        except Exception as exc:  # noqa: BLE001
-            # Not fatal: GitLab may clean up MR refs of old closed/merged
-            # MRs. The engine still looks for both commits locally and
-            # tries `git fetch <sha>` itself (worktree.ensure_commits_available);
-            # for a merged MR they are usually already in the target branch.
-            fetch_warning = f"fetch refs/merge-requests/{meta.iid}/head не удался ({exc}); "
+        # 4.5. The project's repository (local clone, or our managed copy -
+        #      cloned now if this is its first use) with the MR's target
+        #      branch and head brought up to date. Only failing to obtain
+        #      a managed copy is fatal for the MR; fetch problems are not:
+        #      GitLab may clean up MR refs of old closed/merged MRs, and
+        #      the engine still looks for both commits and tries `git fetch
+        #      <sha>` itself (worktree.ensure_commits_available).
+        prepared = ctx.repo_sources.prepare(project, refs.target_branch, meta.iid)
+        for warning in prepared.warnings:
+            ctx.log.file_only(f"{project.path} !{meta.iid}: {warning}")
+        if prepared.warnings:
+            fetch_warning = "; ".join(prepared.warnings) + "; "
 
         # 5. The review itself, with the project's own provider/skills.
         try:
             result = ctx.review_fn(
-                repo_path=local_repo,
+                repo_path=prepared.path,
                 base_sha=refs.base_sha,
                 head_sha=refs.head_sha,
                 mr_title=meta.title,
@@ -400,7 +402,7 @@ def run_poll(
     debug: bool = False,
     client_factory: Callable[[str], GitLabClient] = GitLabClient,
     review_fn: Callable[..., ReviewResult] = run_review,
-    fetch_fn: Callable[[Path, str, str], None] | None = None,
+    repo_sources_factory: Callable[[Config, WorkDir, PassLog], RepoSources] | None = None,
     orphan_cleanup_fn: Callable[[Path, Path], None] | None = None,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
@@ -411,10 +413,8 @@ def run_poll(
     now_fn: Callable[[], datetime] = _utc_now,
 ) -> int:
     """Run one polling pass and return the process exit code."""
-    if fetch_fn is None:
-        from review_agent.worktree import fetch_ref
-
-        fetch_fn = fetch_ref
+    if repo_sources_factory is None:
+        repo_sources_factory = _default_repo_sources
     if orphan_cleanup_fn is None:
         from review_agent.worktree import cleanup_orphaned_worktrees
 
@@ -470,7 +470,7 @@ def run_poll(
                         debug=debug,
                         log=log,
                         review_fn=review_fn,
-                        fetch_fn=fetch_fn,
+                        repo_sources=repo_sources_factory(config, work_dir, log),
                         now_fn=now_fn,
                     )
                     return _run_locked(
@@ -488,6 +488,10 @@ def run_poll(
             log.file_only(f"Проход завершён за {time.monotonic() - started:.1f} с")
 
 
+def _default_repo_sources(config: Config, work_dir: WorkDir, log: PassLog) -> RepoSources:
+    return RepoSources(work_dir.repos, config.gitlab.hostname, notify=log.info)
+
+
 def _housekeeping(
     config: Config,
     work_dir: WorkDir,
@@ -500,16 +504,32 @@ def _housekeeping(
     Never fails the pass - every problem becomes a warning in the log.
     """
     try:
-        for project in config.gitlab.projects:
-            clone = Path(project.local_repo)
-            if project.enabled and is_git_repo(clone):
-                try:
-                    orphan_cleanup_fn(clone, work_dir.tmp)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(f"Не удалось убрать осиротевшие worktree в {clone}: {exc}")
+        # Worktrees of killed runs are registered in the clone they came
+        # from: the local clones of enabled projects and every managed
+        # copy (also of projects disabled or removed from the config).
+        clones = [
+            Path(p.local_repo)
+            for p in config.gitlab.projects
+            if p.enabled and p.local_repo is not None and is_git_repo(Path(p.local_repo))
+        ]
+        for clone in [*clones, *managed_copies(work_dir.repos)]:
+            try:
+                orphan_cleanup_fn(clone, work_dir.tmp)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(f"Не удалось убрать осиротевшие worktree в {clone}: {exc}")
         leftovers = clear_tmp(work_dir, log.warning)
         if leftovers:
             log.info(f"Удалены остатки прерванных прогонов: {leftovers}")
+        broken, expired_repos = expire_repos(
+            work_dir.repos, config.storage.repo_retention_days, warn=log.warning
+        )
+        if broken:
+            log.info(f"Удалены недокачанные или повреждённые кэш-клоны: {broken}")
+        if expired_repos:
+            log.info(
+                f"Удалены кэш-клоны, не использовавшиеся дольше "
+                f"{config.storage.repo_retention_days} дн.: {expired_repos}"
+            )
         expired = cleanup_expired(work_dir, config.storage.retention_days, warn=log.warning)
         if config.storage.retention_days is not None:
             log.file_only(
@@ -550,7 +570,7 @@ def _run_locked(
         if not project.enabled:
             continue
         settings = effective_settings(config, project)
-        if not is_git_repo(Path(project.local_repo)):
+        if project.local_repo is not None and not is_git_repo(Path(project.local_repo)):
             outcomes.append(
                 Outcome(
                     project=project.path,

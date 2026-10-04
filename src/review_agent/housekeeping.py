@@ -11,6 +11,11 @@ by looking at one folder:
                     (publication request bodies). Deleted right after each
                     review; empty after a pass. Leftovers of a killed run
                     are deleted at the start of the next pass.
+      repos/        managed copies of projects without `local_repo`
+                    (repo_source.py): bare clones kept across passes,
+                    deleted when unused for `repo_retention_days`;
+                    `.incoming-*` clones of a killed pass are deleted at
+                    the start of the next one
       logs/         one log per polling pass + harness stderr of FAILED
                     reviews - kept, deleted by age
       dry-run/      would-be comments of `poll --dry-run` - kept, by age
@@ -49,6 +54,10 @@ class WorkDir:
     @property
     def tmp(self) -> Path:
         return self.root / "tmp"
+
+    @property
+    def repos(self) -> Path:
+        return self.root / "repos"
 
     @property
     def logs(self) -> Path:

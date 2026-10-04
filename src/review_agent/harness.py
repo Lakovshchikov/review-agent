@@ -140,11 +140,17 @@ def invoke_harness(
     # Explicit encoding="utf-8": without it, `text=True` decodes using
     # locale.getpreferredencoding() (cp1252 on Windows), garbling OpenCode's
     # UTF-8 output (em-dashes, curly quotes) into mojibake - verified live.
+    # errors="replace": the output is not guaranteed to be pure UTF-8 - a
+    # Windows tool may print in the OEM code page (verified live: byte 0x87,
+    # cp866 Cyrillic, in opencode output). Strict decoding kills
+    # subprocess's reader thread and the run hangs or fails; a replaced
+    # character costs nothing.
     result = runner(
         argv,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         cwd=str(worktree_path),
         env=env,
         # No console of our own (pythonw under Task Scheduler) -> keep

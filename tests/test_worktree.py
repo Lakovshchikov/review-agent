@@ -1,8 +1,12 @@
+import subprocess
 from pathlib import Path
+
+from conftest import has_commit
 
 from review_agent.worktree import (
     cleanup_orphaned_worktrees,
     create_worktree,
+    fetch_refspecs,
     list_registered_worktrees,
     managed_worktree,
 )
@@ -108,54 +112,86 @@ def test_orphaned_worktree_removed_before_new_run_starts(git_repo_with_base_and_
     assert leftover.path not in list_registered_worktrees(repo)
 
 
-def test_fetch_ref_brings_mr_head_without_touching_clone(tmp_path):
-    import subprocess
+def _git(repo, *args):
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
-    from review_agent.worktree import fetch_ref
 
-    def git(repo, *args):
-        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
-        assert result.returncode == 0, result.stderr
-        return result.stdout.strip()
-
-    # "GitLab": a bare repo whose MR head lives only under refs/merge-requests/.
-    upstream_work = tmp_path / "upstream-work"
-    upstream_work.mkdir()
-    git(upstream_work, "init", "-q")
-    git(upstream_work, "config", "user.email", "t@example.com")
-    git(upstream_work, "config", "user.name", "T")
-    (upstream_work / "f.txt").write_text("base\n", encoding="utf-8")
-    git(upstream_work, "add", "f.txt")
-    git(upstream_work, "commit", "-q", "-m", "base")
-    bare = tmp_path / "gitlab.git"
-    subprocess.run(["git", "clone", "-q", "--bare", str(upstream_work), str(bare)], check=True)
-
+def test_fetch_refspecs_brings_target_branch_and_mr_head_in_one_call(fake_gitlab, tmp_path):
     clone = tmp_path / "clone"
-    subprocess.run(["git", "clone", "-q", str(bare), str(clone)], check=True)
+    subprocess.run(["git", "clone", "-q", str(fake_gitlab.bare), str(clone)], check=True)
+    new_base = fake_gitlab.commit_main("moved main\n")
+    mr_sha = fake_gitlab.push_mr(1, "mr change\n")
+    head_before = _git(clone, "rev-parse", "HEAD")
 
-    # MR commit pushed after the clone, only as refs/merge-requests/1/head.
-    (upstream_work / "f.txt").write_text("mr change\n", encoding="utf-8")
-    git(upstream_work, "commit", "-q", "-am", "mr")
-    mr_sha = git(upstream_work, "rev-parse", "HEAD")
-    git(upstream_work, "push", "-q", str(bare), "HEAD:refs/merge-requests/1/head")
+    warnings = fetch_refspecs(
+        clone, "origin", ["+refs/heads/main:refs/remotes/origin/main", "refs/merge-requests/1/head"]
+    )
 
-    head_before = git(clone, "rev-parse", "HEAD")
-    branch_before = git(clone, "rev-parse", "--abbrev-ref", "HEAD")
-    assert subprocess.run(["git", "-C", str(clone), "cat-file", "-e", f"{mr_sha}^{{commit}}"]).returncode != 0
-
-    fetch_ref(clone, "origin", "refs/merge-requests/1/head")
-
-    assert subprocess.run(["git", "-C", str(clone), "cat-file", "-e", f"{mr_sha}^{{commit}}"]).returncode == 0
-    assert git(clone, "rev-parse", "HEAD") == head_before
-    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == branch_before
-    assert git(clone, "status", "--porcelain") == ""
+    assert warnings == []
+    assert has_commit(clone, mr_sha)
+    assert _git(clone, "rev-parse", "refs/remotes/origin/main") == new_base
+    # Local branch, index and working files of the clone are untouched.
+    assert _git(clone, "rev-parse", "HEAD") == head_before
+    assert _git(clone, "status", "--porcelain") == ""
     assert (clone / "f.txt").read_text(encoding="utf-8") == "base\n"
 
 
-def test_fetch_ref_failure_raises(git_repo_with_base_and_head):
-    import pytest
+def test_fetch_refspecs_missing_mr_ref_still_updates_target_branch(fake_gitlab, tmp_path):
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(fake_gitlab.bare), str(clone)], check=True)
+    new_base = fake_gitlab.commit_main("moved main\n")
 
-    from review_agent.worktree import WorktreeError, fetch_ref
+    warnings = fetch_refspecs(
+        clone, "origin", ["+refs/heads/main:refs/remotes/origin/main", "refs/merge-requests/9/head"]
+    )
 
-    with pytest.raises(WorktreeError, match="refs/merge-requests/9/head"):
-        fetch_ref(git_repo_with_base_and_head["repo"], "no-such-remote", "refs/merge-requests/9/head")
+    assert len(warnings) == 1 and "refs/merge-requests/9/head" in warnings[0]
+    assert _git(clone, "rev-parse", "refs/remotes/origin/main") == new_base
+
+
+def test_fetch_refspecs_unknown_remote_returns_warnings(git_repo_with_base_and_head):
+    warnings = fetch_refspecs(git_repo_with_base_and_head["repo"], "no-such-remote", ["refs/merge-requests/9/head"])
+    assert len(warnings) == 1 and "no-such-remote" in warnings[0]
+
+
+def test_network_git_calls_never_prompt(monkeypatch):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    fetch_refspecs(Path("."), "origin", ["refs/heads/main"])
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert captured["env"]["GCM_INTERACTIVE"] == "never"
+
+
+def test_worktree_from_bare_clone(fake_gitlab, tmp_path):
+    bare = tmp_path / "cache.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(fake_gitlab.bare), str(bare)], check=True)
+    head = fake_gitlab.commit_main("head\n")
+    fetch_refspecs(bare, "origin", ["+refs/heads/main:refs/heads/main"])
+
+    with managed_worktree(bare, fake_gitlab.base_sha, head, tmp_path / "tmp") as handle:
+        assert (handle.path / "f.txt").read_text(encoding="utf-8") == "head\n"
+        assert handle.path in list_registered_worktrees(bare)
+        worktree_path = handle.path
+
+    assert not worktree_path.exists()
+    assert worktree_path not in list_registered_worktrees(bare)
+    assert not any((bare / "worktrees").glob("*")) if (bare / "worktrees").exists() else True
+
+
+def test_worktree_add_skips_lfs_smudge(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured[tuple(argv[3:5])] = kwargs
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    create_worktree(Path("repo"), "a" * 40, tmp_path)
+    assert captured[("worktree", "add")]["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"

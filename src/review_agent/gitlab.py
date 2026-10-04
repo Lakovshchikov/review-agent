@@ -69,6 +69,8 @@ class MRMetadata:
 class DiffRefs:
     base_sha: str
     head_sha: str
+    # Branch the MR merges into: holds base_sha, fetched before a review.
+    target_branch: str
 
 
 def encode_project(path: str) -> str:
@@ -257,7 +259,12 @@ class GitLabClient:
         refs = (mr or {}).get("diff_refs") or {}
         if not refs.get("base_sha") or not refs.get("head_sha"):
             raise GitLabError(f"{project}!{iid} has no diff_refs (base/head SHA) yet")
-        return DiffRefs(base_sha=refs["base_sha"], head_sha=refs["head_sha"])
+        target_branch = (mr or {}).get("target_branch")
+        if not isinstance(target_branch, str) or not target_branch:
+            raise GitLabError(f"{project}!{iid} has no target_branch")
+        return DiffRefs(
+            base_sha=refs["base_sha"], head_sha=refs["head_sha"], target_branch=target_branch
+        )
 
     def list_notes(self, project: str, iid: int) -> list[dict[str, Any]]:
         notes = self.api(

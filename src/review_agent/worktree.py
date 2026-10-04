@@ -9,6 +9,7 @@ did not exit cleanly (e.g. the process was killed).
 from __future__ import annotations
 
 import dataclasses
+import os
 import shutil
 import subprocess
 import time
@@ -30,17 +31,33 @@ class WorktreeHandle:
     run_id: str
 
 
-def _run_git(repo_path: Path, *args: str) -> subprocess.CompletedProcess:
+# For every git command that may go to the network: fail at once instead
+# of waiting for a password - in a terminal prompt, or in a Git Credential
+# Manager window that nobody sees when the pass runs from Task Scheduler.
+NETWORK_ENV = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+
+# For `worktree add`: LFS assets are of no use to the review, and the
+# smudge filter would download them (with credentials) mid-checkout.
+CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1"}
+
+
+def run_git(
+    repo_path: Path | None, *args: str, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
+    """`git [-C repo_path] <args>`, output captured as text, no console window."""
+    prefix = ["git"] if repo_path is None else ["git", "-C", str(repo_path)]
     return subprocess.run(
-        ["git", "-C", str(repo_path), *args],
+        [*prefix, *args],
         capture_output=True,
         text=True,
+        env={**os.environ, **extra_env} if extra_env else None,
         creationflags=no_window_flags(),
     )
 
 
+
 def _commit_exists(repo_path: Path, sha: str) -> bool:
-    return _run_git(repo_path, "cat-file", "-e", f"{sha}^{{commit}}").returncode == 0
+    return run_git(repo_path, "cat-file", "-e", f"{sha}^{{commit}}").returncode == 0
 
 
 def ensure_commits_available(repo_path: Path, *shas: str) -> None:
@@ -48,7 +65,7 @@ def ensure_commits_available(repo_path: Path, *shas: str) -> None:
     for sha in shas:
         if _commit_exists(repo_path, sha):
             continue
-        result = _run_git(repo_path, "fetch", "origin", sha)
+        result = run_git(repo_path, "fetch", "origin", sha, extra_env=NETWORK_ENV)
         if result.returncode != 0:
             raise WorktreeError(
                 f"Commit '{sha}' is not available locally and could not be "
@@ -56,22 +73,30 @@ def ensure_commits_available(repo_path: Path, *shas: str) -> None:
             )
 
 
-def fetch_ref(repo_path: Path, remote: str, refspec: str) -> None:
-    """`git fetch <remote> <refspec>` - makes a ref's commits available locally.
+def fetch_refspecs(repo_path: Path, remote: str, refspecs: list[str]) -> list[str]:
+    """`git fetch <remote> <refspec>...` in one call; returns warnings, never raises.
 
-    Used to bring in a merge request's head (`refs/merge-requests/<iid>/head`)
-    before a review: GitLab keeps that ref in the target project even for
-    MRs from forks, and fetching it does not depend on the server allowing
-    fetch-by-SHA. Only FETCH_HEAD and the object store change - never the
-    clone's branches, index, or working files. Knows nothing about GitLab
-    beyond the refspec it is handed.
+    Used to bring a merge request's branches up to date before a review
+    (see repo_source.py). Which refs get written is decided by the
+    refspecs the caller hands in; a refspec without a destination only
+    touches FETCH_HEAD and the object store.
+
+    A fetch with several refspecs fails AS A WHOLE when one remote ref is
+    missing (verified live: GitLab may clean up the MR ref of an old MR) -
+    nothing else is updated then either. So on failure each refspec is
+    retried alone and every one that still fails becomes a warning: the
+    caller decides whether the commits it needs are there anyway
+    (ensure_commits_available).
     """
-    result = _run_git(repo_path, "fetch", "--quiet", remote, refspec)
-    if result.returncode != 0:
-        raise WorktreeError(
-            f"Failed to fetch '{refspec}' from '{remote}' in '{repo_path}': "
-            f"{result.stderr.strip()}"
-        )
+    args = ["fetch", "--quiet", "--no-tags", remote]
+    if run_git(repo_path, *args, *refspecs, extra_env=NETWORK_ENV).returncode == 0:
+        return []
+    warnings = []
+    for refspec in refspecs:
+        result = run_git(repo_path, *args, refspec, extra_env=NETWORK_ENV)
+        if result.returncode != 0:
+            warnings.append(f"fetch {refspec} из '{remote}' не удался: {result.stderr.strip()}")
+    return warnings
 
 
 def _new_run_id() -> str:
@@ -88,7 +113,9 @@ def create_worktree(
     # worktree somewhere other than where Python then looks for it.
     worktree_path = (scratch_dir / run_id / "worktree").resolve()
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    result = _run_git(repo_path, "worktree", "add", "--detach", str(worktree_path), head_sha)
+    result = run_git(
+        repo_path, "worktree", "add", "--detach", str(worktree_path), head_sha, extra_env=CHECKOUT_ENV
+    )
     if result.returncode != 0:
         raise WorktreeError(
             f"Failed to create worktree at '{worktree_path}': {result.stderr.strip()}"
@@ -97,10 +124,10 @@ def create_worktree(
 
 
 def remove_worktree(repo_path: Path, handle: WorktreeHandle) -> None:
-    result = _run_git(repo_path, "worktree", "remove", "--force", str(handle.path))
+    result = run_git(repo_path, "worktree", "remove", "--force", str(handle.path))
     if result.returncode != 0:
         shutil.rmtree(handle.path, ignore_errors=True)
-        _run_git(repo_path, "worktree", "prune")
+        run_git(repo_path, "worktree", "prune")
     try:
         handle.path.parent.rmdir()
     except OSError:
@@ -109,7 +136,7 @@ def remove_worktree(repo_path: Path, handle: WorktreeHandle) -> None:
 
 def list_registered_worktrees(repo_path: Path) -> list[Path]:
     """Return paths of worktrees git currently knows about for this repo."""
-    result = _run_git(repo_path, "worktree", "list", "--porcelain")
+    result = run_git(repo_path, "worktree", "list", "--porcelain")
     if result.returncode != 0:
         raise WorktreeError(f"Failed to list worktrees: {result.stderr.strip()}")
     paths = []
@@ -133,10 +160,10 @@ def cleanup_orphaned_worktrees(repo_path: Path, scratch_dir: Path) -> None:
         if resolved == repo_resolved:
             continue  # the main working copy itself - never touch it
         if scratch_dir in resolved.parents:
-            result = _run_git(repo_path, "worktree", "remove", "--force", str(worktree_path))
+            result = run_git(repo_path, "worktree", "remove", "--force", str(worktree_path))
             if result.returncode != 0:
                 shutil.rmtree(worktree_path, ignore_errors=True)
-    _run_git(repo_path, "worktree", "prune")
+    run_git(repo_path, "worktree", "prune")
 
 
 @contextmanager

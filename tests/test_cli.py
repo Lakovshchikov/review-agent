@@ -184,7 +184,7 @@ def test_poll_dry_run_never_posts(tmp_path):
             return MRMetadata(iid, "t", "d", "u", "https://h/a/b/-/merge_requests/1", False)
 
         def get_diff_refs(self, *a):
-            return DiffRefs("b" * 40, "a" * 40)
+            return DiffRefs("b" * 40, "a" * 40, "main")
 
         def post_note(self, *a, **k):
             raise AssertionError("dry-run must not post")
@@ -203,8 +203,17 @@ def test_poll_dry_run_never_posts(tmp_path):
         dry_run=True,
         client_factory=Client,
         review_fn=review,
-        fetch_fn=lambda *a: None,
+        repo_sources_factory=lambda config, work_dir, log: _NoFetchSources(),
         output_fn=lambda line: None,
         is_git_repo=lambda p: True,
     )
     assert code == 0
+
+
+class _NoFetchSources:
+    def prepare(self, project, target_branch, iid):
+        from pathlib import Path
+
+        from review_agent.repo_source import PreparedRepo
+
+        return PreparedRepo(Path(project.local_repo), [])
