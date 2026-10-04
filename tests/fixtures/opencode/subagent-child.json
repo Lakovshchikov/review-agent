@@ -1,0 +1,165 @@
+{
+ "info": {
+  "id": "ses_ef8dfd57dffeS279sNFlWQr7wk",
+  "parentID": "ses_ef8dfe794ffe6I30YiAUi4MSFE",
+  "projectID": "d3257acd543ad958e60a216e29b80a37199a88d0",
+  "agent": "general",
+  "model": {
+   "id": "gpt-5.6-luna",
+   "providerID": "openai",
+   "variant": "low"
+  },
+  "cost": 0,
+  "tokens": {
+   "input": 10636,
+   "output": 94,
+   "reasoning": 0,
+   "cache": {
+    "read": 0,
+    "write": 0
+   }
+  },
+  "outcome": "succeeded",
+  "time": {
+   "created": 1791120911109,
+   "updated": 1791120911114,
+   "idle": 1791120918655
+  },
+  "title": "<text>",
+  "location": {
+   "directory": "{worktree}"
+  }
+ },
+ "messages": [
+  {
+   "id": "msg_107202b09001cQutBpPnOC7WlN",
+   "time": {
+    "created": 1791120911141
+   },
+   "text": "<text>",
+   "type": "user"
+  },
+  {
+   "id": "msg_107202b2b001IZ7GeqJBEbZo6L",
+   "time": {
+    "created": 1791120911240,
+    "streamed": 1791120915609,
+    "completed": 1791120915701
+   },
+   "type": "assistant",
+   "agent": "general",
+   "model": {
+    "id": "gpt-5.6-luna",
+    "providerID": "openai",
+    "variant": "low"
+   },
+   "content": [
+    {
+     "type": "tool",
+     "id": "call_SfVSLDMhxEVq6IUOrFn3NKA0",
+     "name": "glob",
+     "executed": false,
+     "providerState": {
+      "itemId": "<text>"
+     },
+     "state": {
+      "status": "completed",
+      "input": {
+       "pattern": "<text>",
+       "path": "<text>",
+       "limit": 200
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "<text>"
+       }
+      ],
+      "metadata": {
+       "count": 2,
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1791120914129,
+      "ran": 1791120915575,
+      "completed": 1791120915625
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "<text>",
+    "end": "<text>",
+    "files": []
+   },
+   "finish": "tool-calls",
+   "providerState": {
+    "responseId": "<text>",
+    "serviceTier": "default"
+   },
+   "cost": 0,
+   "tokens": {
+    "input": 5211,
+    "output": 83,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_107203d00001Brg0VgyQGNYSSO",
+   "time": {
+    "created": 1791120915810,
+    "streamed": 1791120918581,
+    "completed": 1791120918651
+   },
+   "type": "assistant",
+   "agent": "general",
+   "model": {
+    "id": "gpt-5.6-luna",
+    "providerID": "openai",
+    "variant": "low"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "<text>",
+     "state": {
+      "itemId": "<text msg_057e9fcd48e78fd0016ac2561636dc87d292e04c4846e92154>",
+      "phase": "final_answer"
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "<text>",
+    "end": "<text>",
+    "files": []
+   },
+   "finish": "stop",
+   "providerState": {
+    "responseId": "<text>",
+    "serviceTier": "default"
+   },
+   "cost": 0,
+   "tokens": {
+    "input": 5425,
+    "output": 11,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_10720487f0013DqkpQqZG0FNm4",
+   "time": {
+    "created": 1791120918655
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}

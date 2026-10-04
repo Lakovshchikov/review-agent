@@ -342,18 +342,22 @@ class OpenCodeUsageSource:
                 usage.missing_reason = "список сессий не получен"
                 return usage
             root = None
+            # Problems with OTHER sessions of the project matter only if ours
+            # is not found (a neighbour may be deleted between list and export).
+            candidate_problems: list[str] = []
             for session_id in ids:
-                data = self._export(session_id, worktree_path, problems)
+                data = self._export(session_id, worktree_path, candidate_problems)
                 if data is None:
                     continue
                 directory = _get(data["info"], "location.directory")
                 if directory is _MISSING:
-                    problems.append(f"{session_id}: info.location.directory: нет поля")
+                    candidate_problems.append(f"{session_id}: info.location.directory: нет поля")
                     continue
                 if isinstance(directory, str) and _same_path(directory, worktree_path):
                     root = data
                     break
             if root is None:
+                problems.extend(candidate_problems)
                 usage.missing_reason = "сессия прогона не найдена среди последних сессий проекта"
                 return usage
 
