@@ -224,7 +224,7 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    проход их пропускает. BREAKING: убран `--scratch-dir`. Детали и
    бэклог — `validation-notes.md` change'а
 
-4. **`managed-repo-cache`** — 🔧 РЕАЛИЗОВАН, ждёт живой проверки
+4. **`managed-repo-cache`** — ✅ РЕАЛИЗОВАН И ПРОВЕРЕН, ждёт архивации
    (`openspec/changes/managed-repo-cache`). `local_repo` у проекта
    необязателен: без него review-agent сам держит bare-клон
    `https://<hostname>/<path>.git` в `<work_dir>/repos/` (лениво, после
@@ -232,8 +232,8 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    конфиг кэш-клона — проверено вживую на Windows до реализации), перед
    каждым ревью одним fetch подтягивает целевую ветку MR и MR-ref (и в
    `local_repo` — только в remote-tracking ref), удаляет кэш-клоны,
-   не использовавшиеся `storage.repo_retention_days` (30). Осталось:
-   живая проверка на боевом GitLab (задача 8.2) — `validation-notes.md`
+   не использовавшиеся `storage.repo_retention_days` (30). Проверен:
+   на боевом GitLab (клон через glab, в т.ч. без консоли) — `validation-notes.md`
    change'а
 
 **Бэклог (отдельные будущие change, п.1–3 завершены — можно пропозить):**
