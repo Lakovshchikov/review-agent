@@ -224,8 +224,8 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    проход их пропускает. BREAKING: убран `--scratch-dir`. Детали и
    бэклог — `validation-notes.md` change'а
 
-4. **`managed-repo-cache`** — ✅ РЕАЛИЗОВАН И ПРОВЕРЕН, ждёт архивации
-   (`openspec/changes/managed-repo-cache`). `local_repo` у проекта
+4. **`managed-repo-cache`** — ✅ ЗАВЕРШЁН И ЗААРХИВИРОВАН
+   (`openspec/changes/archive/2026-10-04-managed-repo-cache`). `local_repo` у проекта
    необязателен: без него review-agent сам держит bare-клон
    `https://<hostname>/<path>.git` в `<work_dir>/repos/` (лениво, после
    claim; авторизация git через `glab auth git-credential`, записанный в
@@ -236,7 +236,7 @@ GitLab-review-боты (у всех единицы-десятки звёзд), �
    на боевом GitLab (клон через glab, в т.ч. без консоли) — `validation-notes.md`
    change'а
 
-**Бэклог (отдельные будущие change, п.1–3 завершены — можно пропозить):**
+**Бэклог (отдельные будущие change, п.1–4 завершены — можно пропозить):**
 - прекращать проход после фатальной ошибки провайдера (лимит/авторизация),
   не пробуя остальные MR (иначе claim создаётся и удаляется на каждом MR)
 - рост профиля OpenCode (`opencode.db`, ~1,3 МБ на ревью) — не чистится
