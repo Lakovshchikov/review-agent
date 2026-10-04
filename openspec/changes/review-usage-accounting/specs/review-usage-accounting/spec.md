@@ -129,10 +129,10 @@ Each ledger record SHALL be one self-contained line carrying a schema version. T
 - **THEN** it SHALL state its schema version
 
 ### Requirement: Interactive quota measurement around a single review
-When exactly one MR or commit range is reviewed from an interactive console (polling without the automatic mode, or the manual review command), the system SHALL ask for the current used percentage of each configured limit window before the review starts and again after the harness finishes, and SHALL store both readings in that run's review record. An empty answer SHALL skip that reading.
+When exactly one MR or commit range is reviewed from an interactive console (polling without the automatic mode, or the manual review command), the system SHALL ask for the current remaining percentage of each configured limit window, as the provider's UI shows it, before the review starts and again after the harness finishes, and SHALL store both readings in that run's review record as percentage used (100 minus remaining). An empty answer SHALL skip that reading.
 
 #### Scenario: Measured review
-- **WHEN** the user picks one MR interactively and answers 12 and 40 for windows "5h" and "week" before the review and 21 and 42 after it
+- **WHEN** the user picks one MR interactively and answers 88 and 60 percent remaining for windows "5h" and "week" before the review and 79 and 58 after it
 - **THEN** the review record SHALL contain the before readings 12 and 40 and the after readings 21 and 42 for those windows
 
 #### Scenario: Skipped measurement

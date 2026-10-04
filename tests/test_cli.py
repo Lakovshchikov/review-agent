@@ -248,7 +248,7 @@ def test_manual_review_asks_quota_on_a_console(git_repo_with_base_and_head, tmp_
 
     _stub_harness(monkeypatch)
     monkeypatch.setattr(polling, "stdin_is_interactive", lambda stream=None: True)
-    answers = iter(["10", "30", "15", "31"])
+    answers = iter(["90", "70", "85", "69"])  # remaining % -> used 10/30, 15/31
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     assert cli.main(_manual_args(git_repo_with_base_and_head, _manual_config(tmp_path))) == 0
     (record,) = _ledger_lines(tmp_path)

@@ -1290,11 +1290,13 @@ def test_interactive_single_mr_gets_quota_questions(setup):
         before=kwargs["quota_prompt"]("before"), after=kwargs["quota_prompt"]("after")
     )
 
-    # pick MR 2, then answer 5h/week before and after; "abc" and "101" are asked again
-    answers = ["2", "12", "abc", "40", "", "101", "42"]
+    # pick MR 2, then answer REMAINING % for 5h/week before and after;
+    # "abc" and "101" are asked again; the ledger gets percent used
+    answers = ["2", "88", "abc", "60", "", "101", "58"]
     assert _poll(setup, gitlab, recorder, answers=answers, output=output) == EXIT_OK
 
     assert readings == {"before": {"5h": 12, "week": 40}, "after": {"week": 42}}
+    assert any("ОСТАЛОСЬ" in line for line in output)
     assert sum("от 0 до 100" in line for line in output) == 2
     assert any("Замер квоты openai" in line for line in output)
 
