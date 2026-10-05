@@ -55,12 +55,17 @@ _SEV = r"(blocker|major|minor)"
 #   SEV: Major / SEV Major / SEV-Major
 #   [Major]  (Major)  **Major**  __Major__
 #   "Major:" / "Major —" at the start of a heading or list item
+#   "### 1. Title — Major"  severity closing a heading or list item
 _LABEL_PATTERNS = [
     re.compile(rf"\bSEV\s*[:=\-]?\s*\**\s*{_SEV}\b", re.IGNORECASE),
     re.compile(rf"[\[(]\s*{_SEV}\s*[\])]", re.IGNORECASE),
     re.compile(rf"(\*\*|__)\s*{_SEV}\s*(\*\*|__)", re.IGNORECASE),
     re.compile(
         rf"^\s*(?:#{{1,6}}\s+|[-*+]\s+|\d+[.)]\s+)?(?:\d+[.)]\s*)?{_SEV}\s*[:—–-]",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^\s*(?:#{{1,6}}\s+|[-*+]\s+|\d+[.)]\s+).*[:—–-]\s*\**\s*{_SEV}\s*\**\s*$",
         re.IGNORECASE,
     ),
 ]

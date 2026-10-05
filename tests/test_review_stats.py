@@ -125,3 +125,12 @@ def test_count_findings_group_item_with_its_own_label_uses_it():
 
 def test_count_findings_empty_group_counts_nothing():
     assert count_findings("### Minor\n\nНет замечаний.\n") == {"blocker": 0, "major": 0, "minor": 0}
+
+
+def test_count_findings_severity_closes_heading():
+    report = (
+        "Найдено **2 Minor-замечания**.\n\n"
+        "### 1. Неполный набор dimensions — Minor\n\ntext\n\n"
+        "### 2. Удаление экспорта может сломать потребителей — Minor\n\ntext\n"
+    )
+    assert count_findings(report) == {"blocker": 0, "major": 0, "minor": 2}
