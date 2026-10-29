@@ -108,7 +108,7 @@ class NoUsageSource:
 # Versions whose `session list` / `session export` output this parser was
 # verified against on a real install; any other version still works but
 # triggers a visible warning (design.md decision 4).
-VERIFIED_OPENCODE_VERSIONS = frozenset({"2.0.21"})
+VERIFIED_OPENCODE_VERSIONS = frozenset({"2.0.21", "2.2.1"})
 
 MAX_CANDIDATES = 5  # newest top-level sessions checked for the run's worktree
 MAX_DEPTH = 5  # subagent nesting followed

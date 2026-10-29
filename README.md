@@ -38,7 +38,7 @@ review-agent poll ──glab──► GitLab: MR на ревьюера → claim
 | --- | --- | --- |
 | Python 3.10+ | сам review-agent (зависимости пакета — PyYAML и Jinja2) | 3.10 |
 | `git` | worktree, клоны | Git for Windows 2.49 |
-| [OpenCode](https://opencode.ai) | агентный харнесс, вызывается как внешний процесс | 2.0.21 |
+| [OpenCode](https://opencode.ai) | агентный харнесс, вызывается как внешний процесс | 2.0.21, 2.2.1 (учёт расхода) |
 | [`glab`](https://gitlab.com/gitlab-org/cli) | GitLab API и авторизация git (только для `poll`); нужен `glab auth git-credential` | 1.115.0 |
 
 Работает на Windows (основная платформа сейчас) и Linux.
