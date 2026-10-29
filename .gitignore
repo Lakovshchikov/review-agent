@@ -16,3 +16,5 @@ venv/
 /.review-agent-*/
 # Old Change 1-2 scratch folder (no longer used; delete it once by hand)
 .review-agent-scratch*/
+
+prompts
