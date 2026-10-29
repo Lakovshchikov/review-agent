@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -1285,7 +1286,8 @@ def _copy_with_orphan(fake_gitlab, work, age_days=0):
     orphan = work / "tmp" / "1700000000-deadbeef" / "worktree"
     orphan.parent.mkdir(parents=True)
     subprocess.run(["git", "-C", str(copy), "worktree", "add", "--detach", str(orphan), "main"], check=True, capture_output=True)
-    stamp = NOW.timestamp() - age_days * 86400 if age_days else None
+    # Expiry in the pass is judged by the real clock (time.time()), not NOW.
+    stamp = time.time() - age_days * 86400 if age_days else None
     if stamp is not None:
         os.utime(copy / LAST_USED_MARKER, (stamp, stamp))
     return copy, orphan
