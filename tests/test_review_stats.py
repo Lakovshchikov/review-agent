@@ -127,6 +127,15 @@ def test_count_findings_empty_group_counts_nothing():
     assert count_findings("### Minor\n\nНет замечаний.\n") == {"blocker": 0, "major": 0, "minor": 0}
 
 
+def test_count_findings_ignores_tally_line_with_two_severities():
+    report = (
+        "## Итог\nНайдено **5 замечаний**: 2 — **Major**, 3 — **Minor**.\n\n"
+        "### 1. SEV: Major — A\n### 2. SEV: Major — B\n"
+        "### 3. SEV: Minor — C\n### 4. SEV: Minor — D\n### 5. SEV: Minor — E\n"
+    )
+    assert count_findings(report) == {"blocker": 0, "major": 2, "minor": 3}
+
+
 def test_count_findings_severity_closes_heading():
     report = (
         "Найдено **2 Minor-замечания**.\n\n"

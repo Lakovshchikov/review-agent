@@ -71,6 +71,22 @@ _LABEL_PATTERNS = [
 ]
 
 
+def _is_tally(line: str) -> bool:
+    """A line labelled with two different severities is a tally, not a finding.
+
+    "Найдено 5 замечаний: 2 — **Major**, 3 — **Minor**." names both; counting
+    its first label would add a phantom finding.
+    """
+    found = {
+        word.lower()
+        for pattern in _LABEL_PATTERNS
+        for match in pattern.finditer(line)
+        for word in match.groups()
+        if word and word.lower() in SEVERITIES
+    }
+    return len(found) > 1
+
+
 def _label_in(line: str) -> str | None:
     best: tuple[int, str] | None = None
     for pattern in _LABEL_PATTERNS:
@@ -147,7 +163,7 @@ def count_findings(report: str | None) -> dict[str, int] | None:
 
         label = _label_in(line)
         if section is None:
-            if label is not None:
+            if label is not None and not _is_tally(line):
                 counts[label] += 1
             continue
         current = _item_style(line)
