@@ -93,9 +93,10 @@ storage:
 usage:
   enabled: true                 # false — ни журнала, ни вопросов о квоте
   source: opencode              # opencode | none
-  # Если сессии прогонов не находятся, добавьте сюда --standalone.
-  session_list_command: [opencode, session, list]
-  session_export_command: [opencode, session, export, "{session_id}"]
+  # --standalone ОБЯЗАТЕЛЕН: без него OpenCode поднимает фоновый сервис, и тот
+  # после удаления worktree крутит одно ядро CPU (docs/decisions.md).
+  session_list_command: [opencode, session, list, --standalone]
+  session_export_command: [opencode, session, export, "{session_id}", --standalone]
   quota_windows: [5h, week]     # окна лимита подписки для интерактивного замера
   # Справочник цен LiteLLM (URL или путь); загружается заново при каждом `review-agent usage`.
   price_catalog: https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json

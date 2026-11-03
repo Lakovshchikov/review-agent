@@ -151,8 +151,8 @@ OpenCode 2.0.21 сделать нельзя, подробности в
 | --- | --- | --- | --- |
 | `enabled` | `true`/`false` | `true` | `false` — не писать журнал и не спрашивать о квоте |
 | `source` | `opencode` / `none` | `opencode` | откуда брать токены |
-| `session_list_command` | список строк | `[opencode, session, list]` | команда списка сессий харнесса (только чтение) |
-| `session_export_command` | список строк | `[opencode, session, export, "{session_id}"]` | экспорт сессии; обязан содержать `{session_id}` |
+| `session_list_command` | список строк | `[opencode, session, list, --standalone]` | команда списка сессий харнесса (только чтение); `--standalone` обязателен ([почему](decisions.md#opencode-session---standalone)) |
+| `session_export_command` | список строк | `[opencode, session, export, "{session_id}", --standalone]` | экспорт сессии; обязан содержать `{session_id}` |
 | `quota_windows` | список строк | `[5h, week]` | окна лимита подписки, о которых спрашивается в интерактивном прогоне; без повторов |
 | `price_catalog` | строка (URL или путь) | справочник LiteLLM `model_prices_and_context_window.json` на GitHub | откуда `review-agent usage` берёт цены |
 | `price_overrides` | словарь `"<provider>/<model>": {…}` | `{}` | свои цены в формате записи справочника; заменяют запись справочника целиком |

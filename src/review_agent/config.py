@@ -187,10 +187,10 @@ class UsageConfig:
     # Where token usage comes from: "opencode" (session export) or "none".
     source: str = "opencode"
     session_list_command: list[str] = dataclasses.field(
-        default_factory=lambda: ["opencode", "session", "list"]
+        default_factory=lambda: ["opencode", "session", "list", "--standalone"]
     )
     session_export_command: list[str] = dataclasses.field(
-        default_factory=lambda: ["opencode", "session", "export", "{session_id}"]
+        default_factory=lambda: ["opencode", "session", "export", "{session_id}", "--standalone"]
     )
     # Subscription limit windows asked about in an interactive single-MR run.
     quota_windows: list[str] = dataclasses.field(default_factory=lambda: ["5h", "week"])

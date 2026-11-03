@@ -145,7 +145,16 @@ GitLab удалил MR-ref (старые и закрытые MR). Это не о
 
 ### «Сессия прогона не найдена» у всех прогонов
 
-Добавьте `--standalone` в `usage.session_list_command`.
+Проверьте, что в `usage.session_list_command` и `usage.session_export_command`
+есть `--standalone` (дефолт). Без него сессии могут не находиться, а фоновый
+сервис OpenCode остаётся жить и грузит ядро CPU — см. следующий пункт.
+
+### `opencode.exe serve --service` грузит одно ядро CPU после прогона
+
+Команды учёта расхода запущены без `--standalone` и подняли фоновый сервис;
+после удаления worktree он крутится в цикле. Добавьте `--standalone` в обе
+команды `usage.*` и остановите сервис: `opencode service stop` (или завершите
+процесс). Подробности — [decisions.md](decisions.md#opencode-session---standalone).
 
 ### В сводке `n/a` вместо цены
 

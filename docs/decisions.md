@@ -13,6 +13,7 @@ OpenCode 2.0.21, облачный провайдер, боевой GitLab. По�
 Содержание:
 [denylist вместо allowlist](#denylist-вместо-allowlist) ·
 [opencode run --standalone](#opencode-run---standalone) ·
+[opencode session --standalone](#opencode-session---standalone) ·
 [промпт через --file](#промпт-через---file) ·
 [явная кодировка UTF-8](#явная-кодировка-utf-8) ·
 [reasoning_effort: null](#reasoning_effort-null) ·
@@ -58,6 +59,22 @@ GitLab и нет веб-доступа.
 
 **Проверено:** `2026-10-02-core-review-engine/validation-notes.md`.
 **Где:** `config.example.yaml`, `harness.py`.
+
+## opencode session --standalone
+
+**Что:** `--standalone` в `usage.session_list_command` и
+`usage.session_export_command` обязателен (дефолт).
+
+**Почему:** без флага OpenCode 2.2.1 поднимает фоновый
+`opencode serve --service` и заводит в нём «инстанс» для `cwd` (worktree).
+Пайплайн удаляет worktree, и сервис уходит в цикл на одном ядре CPU (≈6 % на
+16 ядрах) и не завершается сам. С `--standalone` список и экспорт сессий
+идентичны (общая БД), а фонового процесса нет.
+
+**Проверено:** 2026-11-03 вручную: без флага сервис появляется и после
+удаления папки даёт ~4 с CPU за 4 с; с флагом — процессов `opencode` после
+команд нет, вывод `session list` совпадает.
+**Где:** `config.py` (`UsageConfig`), `config.example.yaml`.
 
 ## Промпт через --file
 

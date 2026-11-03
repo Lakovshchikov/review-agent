@@ -392,8 +392,10 @@ def test_usage_section_defaults_when_absent(tmp_path):
     usage = load_config(_write_cfg(tmp_path)).usage
     assert usage.enabled is True
     assert usage.source == "opencode"
-    assert usage.session_list_command == ["opencode", "session", "list"]
-    assert usage.session_export_command == ["opencode", "session", "export", "{session_id}"]
+    assert usage.session_list_command == ["opencode", "session", "list", "--standalone"]
+    assert usage.session_export_command == [
+        "opencode", "session", "export", "{session_id}", "--standalone",
+    ]
     assert usage.quota_windows == ["5h", "week"]
     assert usage.price_catalog == DEFAULT_PRICE_CATALOG
     assert usage.price_overrides == {}

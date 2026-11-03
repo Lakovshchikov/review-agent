@@ -223,8 +223,8 @@ storage:
 usage:                            # учёт расхода
   enabled: true                   # = true; false — ни журнала, ни вопросов о квоте
   source: opencode                # = opencode; opencode | none
-  session_list_command: [opencode, session, list]                    # = это значение; + --standalone, если сессии не находятся
-  session_export_command: [opencode, session, export, "{session_id}"]  # = это значение; {session_id} обязателен
+  session_list_command: [opencode, session, list, --standalone]                    # = это значение; --standalone обязателен
+  session_export_command: [opencode, session, export, "{session_id}", --standalone]  # = это значение; {session_id} обязателен
   quota_windows: [5h, week]       # = [5h, week]; окна лимита подписки для ручного замера
   price_catalog: https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
                                   # = это значение; URL или путь к ценам LiteLLM
