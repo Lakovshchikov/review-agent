@@ -154,7 +154,7 @@ review-agent, и никогда — из ревьюируемого репози
 Проверяет шаблоны без ревью, без GitLab и без lock.
 
 ```bash
-review-agent prompt-check [--project PATH | --template FILE] [--show] [--config config.yaml]
+review-agent prompt-check [--project PATH | --template FILE] [--show] [--config FILE]
 ```
 
 | Флаг | Что делает |
@@ -163,7 +163,7 @@ review-agent prompt-check [--project PATH | --template FILE] [--show] [--config 
 | `--project PATH` | только итоговые настройки проекта `PATH` (`group/project`) |
 | `--template FILE` | отдельный файл шаблона, без проектов; skills — глобальные из конфига, если он загрузился |
 | `--show` | дополнительно напечатать отрендеренный промпт с тестовыми значениями |
-| `--config PATH` | конфиг, по умолчанию `config.yaml` |
+| `--config PATH` | конфиг; по умолчанию `config.yaml` из `REVIEW_AGENT_HOME`, иначе из текущей папки |
 
 Коды выхода: `0` — замечаний нет, `1` — только предупреждения, `2` — есть
 ошибки, конфиг не загрузился или проект не найден.

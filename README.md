@@ -46,13 +46,36 @@ review-agent poll ──glab──► GitLab: MR на ревьюера → claim
 ## Установка
 
 ```bash
-pip install -e ".[dev]"            # пакет + pytest; создаёт команду review-agent
 opencode auth login                # авторизация облачного провайдера (или: ollama pull <model>)
 glab auth login --hostname <host>  # только для poll; от этой учётки публикуются комментарии
 cp config.example.yaml config.yaml # и отредактировать
 ```
 
 Кредов в конфиге нет: провайдер авторизуется в OpenCode, GitLab — в `glab`.
+
+**Запуск из любой консоли.** Один раз на машину запустите скрипт — нужен
+[`pipx`](https://pipx.pypa.io) (`py -m pip install --user pipx` на Windows,
+`brew install pipx` на macOS):
+
+```powershell
+.\scripts\set-home.ps1             # Windows
+```
+
+```bash
+bash scripts/set-home.sh            # macOS
+```
+
+Скрипт ставит команду `review-agent` (`pipx install -e`, код берётся из
+этого репозитория) и записывает папку репозитория в переменную окружения
+`REVIEW_AGENT_HOME`. Путь скрипт определяет сам. Дальше `review-agent`
+работает в любой папке: конфиг берётся из `config.yaml` в этой папке, а
+рабочая папка, отчёты и остальные файлы лежат рядом с ним. **Откройте
+новую консоль:** уже открытые переменную не видят (терминал внутри VS Code
+наследует окружение самого VS Code — перезапустите его целиком). Параметры скрипта —
+[ниже](#scriptsset-homeps1--scriptsset-homesh--команда-и-переменная-дома).
+
+Без скрипта, только для разработки: `pip install -e ".[dev]"` (пакет +
+pytest) в venv; тогда запускайте из папки с `config.yaml` или с `--config`.
 
 ## Быстрый старт
 
@@ -71,7 +94,7 @@ review-agent poll                  # то же с публикацией
 ### `review-agent poll` — проход опроса GitLab
 
 ```bash
-review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config config.yaml]
+review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config FILE]
 ```
 
 | Флаг | Что делает |
@@ -81,7 +104,7 @@ review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config con
 | `--dry-run` | ничего не писать в GitLab; несостоявшийся комментарий — в `<work_dir>/dry-run/` |
 | `--include-closed` | искать также закрытые и смёрженные MR (для тестов) |
 | `--debug` | сохранить файлы каждого прогона в `<work_dir>/debug/` |
-| `--config PATH` | конфиг, по умолчанию `config.yaml` |
+| `--config PATH` | конфиг; по умолчанию `config.yaml` из папки `REVIEW_AGENT_HOME`, иначе из текущей папки |
 
 Отревьюенный MR помечается невидимым маркером в комментарии
 (`<!-- ai-review: sha=<head_sha> -->`) и больше не ревьюится. Пока идёт
@@ -92,7 +115,7 @@ review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config con
 ### `review-agent` — ручное ревью диапазона коммитов
 
 ```bash
-review-agent --repo PATH --base SHA --head SHA [--mr-title TEXT] [--mr-description TEXT] [--config config.yaml] [--debug]
+review-agent --repo PATH --base SHA --head SHA [--mr-title TEXT] [--mr-description TEXT] [--config FILE] [--debug]
 ```
 
 (то же: `python -m review_agent …`)
@@ -104,7 +127,7 @@ review-agent --repo PATH --base SHA --head SHA [--mr-title TEXT] [--mr-descripti
 | `--head SHA` | ревьюируемый коммит |
 | `--mr-title TEXT` | заголовок, передаётся агенту (по умолчанию пусто) |
 | `--mr-description TEXT` | описание, передаётся агенту (по умолчанию пусто) |
-| `--config PATH` | конфиг, по умолчанию `config.yaml`; секция `gitlab` не нужна |
+| `--config PATH` | конфиг; по умолчанию `config.yaml` из папки `REVIEW_AGENT_HOME`, иначе из текущей папки; секция `gitlab` не нужна |
 | `--debug` | сохранить файлы прогона в `<work_dir>/debug/<время>-manual-<sha12>/` |
 
 Отчёт пишется в `report.output_path`, ссылки не переписываются. Из консоли
@@ -113,7 +136,7 @@ review-agent --repo PATH --base SHA --head SHA [--mr-title TEXT] [--mr-descripti
 ### `review-agent usage` — сводка расхода
 
 ```bash
-review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr|model|day] [--format table|csv|json] [--wide] [--config config.yaml]
+review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr|model|day] [--format table|csv|json] [--wide] [--config FILE]
 ```
 
 | Флаг | Что делает |
@@ -123,7 +146,7 @@ review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr
 | `--by` | группировка: `review` (по умолчанию), `mr`, `model`, `day` |
 | `--format` | `table` (по умолчанию), `csv`, `json` |
 | `--wide` | таблица со всеми колонками (в CSV и JSON — всегда все) |
-| `--config PATH` | конфиг, по умолчанию `config.yaml` |
+| `--config PATH` | конфиг; по умолчанию `config.yaml` из папки `REVIEW_AGENT_HOME`, иначе из текущей папки |
 
 Показывает токены, время, размер MR, находки, API-эквивалент в долларах по
 актуальным ценам LiteLLM и долю лимитов подписки. Печатает в консоль, файл
@@ -133,7 +156,7 @@ review-agent usage [--since 30d|YYYY-MM-DD] [--until YYYY-MM-DD] [--by review|mr
 ### `review-agent prompt-check` — проверка шаблонов промпта
 
 ```bash
-review-agent prompt-check [--project PATH | --template FILE] [--show] [--config config.yaml]
+review-agent prompt-check [--project PATH | --template FILE] [--show] [--config FILE]
 ```
 
 | Флаг | Что делает |
@@ -142,7 +165,7 @@ review-agent prompt-check [--project PATH | --template FILE] [--show] [--config 
 | `--project PATH` | только итоговые настройки проекта `group/project` |
 | `--template FILE` | отдельный файл шаблона без проектов (конфиг не обязателен) |
 | `--show` | напечатать промпт, отрендеренный с тестовыми значениями |
-| `--config PATH` | конфиг, по умолчанию `config.yaml` |
+| `--config PATH` | конфиг; по умолчанию `config.yaml` из папки `REVIEW_AGENT_HOME`, иначе из текущей папки |
 
 Ошибки (файла нет, синтаксис Jinja2, неизвестная переменная) и
 предупреждения (шаблон не использует переменную, нет файла skill) выводятся
@@ -171,6 +194,23 @@ review-agent prompt-check [--project PATH | --template FILE] [--show] [--config 
 Задача всегда запускает `poll --all`. Как следить за задачей и что значат
 коды результата — [docs/scheduling.md](docs/scheduling.md).
 
+### `scripts/set-home.ps1` / `scripts/set-home.sh` — команда и переменная дома
+
+Первый — для Windows (PowerShell), второй — для macOS. Путь к дому
+(папка репозитория) скрипт берёт из своего расположения, не спрашивает.
+
+| Параметр | Смысл |
+| --- | --- |
+| `-Python X` / `--python X` | интерпретатор для окружения `pipx`: версия (`3.13`) или путь. Нужен, если Python по умолчанию слишком новый и у зависимостей нет готовых пакетов (ошибка сборки `pyyaml`, «Microsoft Visual C++ 14.0 required») |
+| `-DryRun` / `--dry-run` | только показать, что будет сделано; ничего не меняется |
+| `-Remove` / `--remove` | удалить переменную (блок в rc-файле) и команду (`pipx uninstall`) |
+| `--rc-file FILE` | только `set-home.sh`: куда писать блок (по умолчанию `~/.zshrc`; для bash — `~/.bash_profile`) |
+
+Повторный запуск безопасен (переменная перезаписывается, блок заменяется,
+установка обновляется) — запустите его снова после переноса репозитория. Без
+`pipx` скрипт останавливается, ничего не изменив. Подробности и что делать,
+если консоль не видит переменную, — [docs/troubleshooting.md](docs/troubleshooting.md#команда-или-конфиг-не-находятся-из-другой-папки).
+
 ### Коды выхода
 
 | Код | `poll` | ручной режим |
@@ -185,7 +225,9 @@ review-agent prompt-check [--project PATH | --template FILE] [--show] [--config 
 
 `config.yaml` (образец — `config.example.yaml`). Полный справочник с
 типами и проверками — [docs/configuration.md](docs/configuration.md).
-Относительные пути считаются от текущей папки процесса. Ниже все ключи;
+Конфиг ищется так: `--config`, затем `config.yaml` в папке из переменной
+`REVIEW_AGENT_HOME`, затем `config.yaml` в текущей папке. Относительные пути в
+конфиге считаются **от папки конфига**, а не от текущей. Ниже все ключи;
 `# обяз.` — обязательный ключ, у остальных указано значение по умолчанию.
 
 ```yaml

@@ -65,7 +65,13 @@ context: |
      validation-notes.md. Найден баг вне scope: skill-файлы не читаются
      агентом (external_directory) — в бэклоге AGENTS.md п.7.
 
-  Дорожная карта п.1–8 выполнена; следующие change — из бэклога AGENTS.md п.7.
+  9. global-launch-and-config-home — применён
+  (openspec/changes/archive/2026-11-13-global-launch-and-config-home).
+  Запуск из любой консоли: REVIEW_AGENT_HOME, конфиг и относительные пути
+  от папки конфига, scripts/set-home.ps1 / set-home.sh. Проверен вживую на
+  Windows (боевой MR, весь проход); macOS — только тестами (validation-notes.md).
+
+  Дорожная карта п.1–9 выполнена; следующие change — из бэклога AGENTS.md п.7.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 

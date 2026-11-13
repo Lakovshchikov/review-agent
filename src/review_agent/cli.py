@@ -23,6 +23,11 @@ import argparse
 import sys
 from pathlib import Path
 
+_CONFIG_HELP = (
+    "Path to the review-agent YAML config. Default: config.yaml in the folder "
+    "named by REVIEW_AGENT_HOME, otherwise in the current folder."
+)
+
 
 def _add_debug_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -72,8 +77,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to the review-agent YAML config (default: config.yaml).",
+        default=None,
+        help=_CONFIG_HELP,
     )
     _add_debug_flag(parser)
     return parser
@@ -110,8 +115,8 @@ def build_poll_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to the review-agent YAML config with a 'gitlab' section (default: config.yaml).",
+        default=None,
+        help=_CONFIG_HELP,
     )
     _add_debug_flag(parser)
     return parser
@@ -120,10 +125,11 @@ def build_poll_arg_parser() -> argparse.ArgumentParser:
 def poll_main(argv: list[str]) -> int:
     args = build_poll_arg_parser().parse_args(argv)
 
+    from review_agent.config import resolve_config_path
     from review_agent.polling import run_poll
 
     return run_poll(
-        config_path=Path(args.config),
+        config_path=resolve_config_path(args.config),
         review_all=args.review_all,
         dry_run=args.dry_run,
         include_closed=args.include_closed,
@@ -156,8 +162,8 @@ def build_usage_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to the review-agent YAML config (default: config.yaml).",
+        default=None,
+        help=_CONFIG_HELP,
     )
     return parser
 
@@ -189,8 +195,8 @@ def build_prompt_check_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to the review-agent YAML config (default: config.yaml).",
+        default=None,
+        help=_CONFIG_HELP,
     )
     return parser
 
@@ -200,7 +206,7 @@ def prompt_check_main(argv: list[str]) -> int:
 
     import os
 
-    from review_agent.config import ConfigError, PromptSettings, load_config
+    from review_agent.config import ConfigError, PromptSettings, load_config, resolve_config_path
     from review_agent.prompt import BUILTIN_TEMPLATE
     from review_agent.prompt_check import (
         EXIT_ERRORS,
@@ -210,7 +216,7 @@ def prompt_check_main(argv: list[str]) -> int:
     )
 
     try:
-        config = load_config(Path(args.config))
+        config = load_config(resolve_config_path(args.config))
     except ConfigError as exc:
         if args.template is None:
             print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
@@ -257,14 +263,14 @@ def _print_safe(text: str) -> None:
 def usage_main(argv: list[str], *, fetch=None) -> int:
     args = build_usage_arg_parser().parse_args(argv)
 
-    from review_agent.config import ConfigError, load_config
+    from review_agent.config import ConfigError, load_config, resolve_config_path
     from review_agent.housekeeping import WorkDir
     from review_agent.usage_ledger import LEDGER_NAME, read_records
     from review_agent.usage_prices import CATALOG_CACHE_NAME, PriceBook, load_catalog
     from review_agent.usage_summary import PeriodError, parse_since, parse_until, render, summarize
 
     try:
-        config = load_config(Path(args.config))
+        config = load_config(resolve_config_path(args.config))
     except ConfigError as exc:
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 2
@@ -331,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     # Deferred imports: keep `--help` fast and avoid importing the full
     # pipeline (and its dependencies) just to print usage.
     from review_agent import pipeline
-    from review_agent.config import ConfigError, load_config
+    from review_agent.config import ConfigError, load_config, resolve_config_path
     from review_agent.housekeeping import WorkDir, stamp
     from review_agent.lock import PollLockBusy, poll_lock
     from review_agent.polling import stdin_is_interactive
@@ -341,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     from review_agent.usage_ledger import RunLabels, make_recorder
 
     try:
-        config = load_config(Path(args.config))
+        config = load_config(resolve_config_path(args.config))
     except ConfigError as exc:
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 2

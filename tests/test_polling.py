@@ -522,6 +522,8 @@ def test_dry_run_posts_nothing_and_saves_comment(setup):
     assert len(comments) == 1
     assert build_marker("a" * 40) in comments[0].read_text(encoding="utf-8")
     assert any("[dry-run]" in line for line in output)
+    # The console names the saved comment by its absolute path.
+    assert any(str(comments[0]) in line and comments[0].is_absolute() for line in output)
 
 
 # -- file links --------------------------------------------------------------
@@ -906,7 +908,7 @@ def test_project_settings_reach_discovery_engine_and_comment(setup):
         ("b2c/other", ["other-bot"], True),
     ]
     by_head = {k["head_sha"]: k["config"] for k in recorder.reviews}
-    assert by_head["1" * 40].provider.name == "openai" and by_head["1" * 40].skills == [os.path.abspath("global.md")]
+    assert by_head["1" * 40].provider.name == "openai" and by_head["1" * 40].skills == [str(setup["tmp"] / "global.md")]
     assert by_head["2" * 40].provider.name == "anthropic" and by_head["2" * 40].skills == []
     bodies = {i: b for _, i, b in gitlab.published}
     assert "openai/gpt#medium" in bodies[1]
@@ -954,14 +956,15 @@ def test_invalid_config_logged_in_its_readable_work_dir(setup):
     assert "reasoning_effort" in _pass_logs(setup)[0].read_text(encoding="utf-8")
 
 
-def test_unparsable_config_logged_in_default_work_dir(setup, tmp_path, monkeypatch):
+def test_unparsable_config_logged_in_default_work_dir_next_to_config(setup, tmp_path, monkeypatch):
     setup["config"].write_text("provider: [unclosed\n", encoding="utf-8")
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
 
     assert _poll(setup, FakeGitLab({}), Recorder(), review_all=True) == EXIT_NOT_STARTED
-    logs = list((cwd / ".review-agent" / "logs").glob("poll-*.log"))
+    assert not (cwd / ".review-agent").exists()
+    logs = list((tmp_path / ".review-agent" / "logs").glob("poll-*.log"))
     assert len(logs) == 1 and "Ошибка конфигурации" in logs[0].read_text(encoding="utf-8")
 
 

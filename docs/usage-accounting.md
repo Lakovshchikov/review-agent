@@ -129,7 +129,7 @@ review-agent usage --format json
 | `--by` | `review`, `mr`, `model`, `day` | `review` |
 | `--format` | `table`, `csv`, `json` | `table` |
 | `--wide` | таблица со всеми колонками (CSV и JSON — всегда все) | выкл. |
-| `--config` | путь к конфигу | `config.yaml` |
+| `--config` | путь к конфигу | `config.yaml` из `REVIEW_AGENT_HOME`, иначе из текущей папки |
 
 Пример вывода:
 

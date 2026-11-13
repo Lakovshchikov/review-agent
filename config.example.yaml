@@ -1,6 +1,8 @@
 # Пример конфигурации review-agent. Скопируйте в config.yaml и отредактируйте.
 # Справочник всех ключей (тип, значение по умолчанию, смысл): docs/configuration.md
-# Относительные пути считаются от текущей папки процесса.
+# Конфиг ищется так: --config, затем config.yaml в папке REVIEW_AGENT_HOME,
+# затем config.yaml в текущей папке. Относительные пути ниже (work_dir,
+# output_path, skills, prompt.template, local_repo) считаются от папки конфига.
 
 provider:
   # Провайдер и модель OpenCode; склеиваются в "anthropic/claude-sonnet-4-5#medium".
@@ -36,7 +38,7 @@ report:
   output_path: "./reports/review-{run_id}.md"
 
 # Knowledge-skill файлы — подсказки агенту, не ограничение. Относительные пути
-# считаются от текущей папки и при загрузке становятся абсолютными.
+# считаются от папки конфига и при загрузке становятся абсолютными.
 # Известное ограничение: сейчас агент не может прочитать skill-файл
 # (OpenCode отклоняет чтение вне worktree) — docs/configuration.md#skills.
 skills: []

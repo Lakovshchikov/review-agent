@@ -1,7 +1,7 @@
 # Опрос GitLab: `review-agent poll`
 
 ```bash
-review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config config.yaml]
+review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config FILE]
 ```
 
 Один вызов — **один проход** и выход, без цикла и демона. Кто вызывает
@@ -59,7 +59,7 @@ review-agent poll [--all] [--dry-run] [--include-closed] [--debug] [--config con
 | `--dry-run` | всё как обычно, но в GitLab ничего не пишется (ни claim'а, ни комментария). Несостоявшийся комментарий — в `<work_dir>/dry-run/`. Рекомендуемый первый запуск |
 | `--include-closed` | искать также закрытые и смёрженные MR (в списке видно `[merged]` / `[closed]`) — для тестов на MR, где комментарий бота никому не мешает. В расписании не используется |
 | `--debug` | сохранить все файлы каждого прогона (промпт, safety-note, отчёт, stderr харнесса, тела запросов) в `<work_dir>/debug/<время>-<проект>-<iid>/` |
-| `--config PATH` | конфиг; по умолчанию `config.yaml`. Нужна секция `gitlab` |
+| `--config PATH` | конфиг; по умолчанию `config.yaml` из `REVIEW_AGENT_HOME`, иначе из текущей папки. Нужна секция `gitlab` |
 
 Без `--all`, когда stdin — не консоль (Task Scheduler, CI, `< NUL`), команда
 **не ждёт ввода** и сразу завершается с кодом 2 и подсказкой про `--all`.

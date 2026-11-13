@@ -127,6 +127,12 @@ agentic-харнесс с подключаемым провайдером мод
   идемпотентный CLI-вызов без внутреннего state. Кто вызывает по
   расписанию (Task Scheduler сейчас, cron/systemd/GitLab CI `schedule`
   потом), entrypoint не знает и от этого не зависит.
+- **Запуск из любой папки.** Дом агента — папка этого репозитория,
+  переменная окружения `REVIEW_AGENT_HOME` (её и команду `review-agent`
+  ставят `scripts/set-home.ps1` / `scripts/set-home.sh`). Конфиг ищется как
+  `--config` → `$REVIEW_AGENT_HOME/config.yaml` → `./config.yaml`; относительные
+  пути конфига (`work_dir`, отчёты, skills, шаблон, `local_repo`) считаются
+  от папки конфига. Task Scheduler от переменной не зависит.
 - **Креды не в конфиге:** провайдер авторизован в OpenCode, GitLab — в
   `glab`; git кэш-клонов авторизуется через `glab auth git-credential`.
 
@@ -169,6 +175,7 @@ change пропозится только после `apply` и ручной пр
 | 6 | `gitlab-file-links` | ссылки на файлы в отчёте ведут на GitLab в отревьюенном коммите | `archive/2026-10-04-gitlab-file-links` |
 | 7 | `restructure-documentation` | README как справочник, `docs/`, карта репозитория и правило актуализации документации (п.10–11) | `archive/2026-10-04-restructure-documentation` |
 | 8 | `configurable-review-prompt` | промпт — Jinja2-шаблон (встроенный = baseline), `prompt` в конфиге с переопределением проекта по ключам, проверка шаблонов перед работой, `prompt-check` | `archive/2026-10-04-configurable-review-prompt` |
+| 9 | `global-launch-and-config-home` | запуск из любой папки: `REVIEW_AGENT_HOME`, конфиг и пути от папки конфига, скрипты `set-home.ps1` / `set-home.sh` (команда через pipx + переменная) | `archive/2026-11-13-global-launch-and-config-home` |
 
 Пути архивов — относительно `openspec/changes/`.
 
@@ -190,6 +197,11 @@ change пропозится только после `apply` и ручной пр
 - self-generating best-practices ruleset из истории ревью+фидбека;
 - ревью на новый diff после правок (повторный прогон той же MR);
 - backend/другие стеки помимо frontend;
+- `set-home.sh` (macOS) проверен только тестами со stub-`pipx` в Git Bash,
+  вживую на macOS не запускался; зависимости могут не собираться на самой
+  новой версии Python (у pyyaml нет готовых пакетов) — тогда `-Python`/
+  `--python`; решить, ограничивать ли `requires-python` сверху или выбирать
+  интерпретатор в скрипте автоматически;
 - **баг: knowledge-skills не доходят до агента.** Skill-файлы лежат вне
   worktree, OpenCode 2.0.21 требует для их чтения разрешение
   `external_directory`, а в неинтерактивном прогоне запрос отклоняется
@@ -250,6 +262,10 @@ review-agent prompt-check --show  # проверка шаблонов промп
 ```
 
 ```powershell
+.\scripts\set-home.ps1 -DryRun   # Windows: команда в PATH + REVIEW_AGENT_HOME (macOS: bash scripts/set-home.sh --dry-run)
+```
+
+```powershell
 .\scripts\register-task.ps1 -DryRun -IntervalMinutes 15   # задача Task Scheduler, сначала dry-run
 .\scripts\register-task.ps1                               # боевая задача (обновляет ту же)
 .\scripts\register-task.ps1 -Remove                       # удалить задачу
@@ -265,12 +281,13 @@ Get-ScheduledTaskInfo -TaskName review-agent-poll          # LastTaskResult: 0/1
 
 ```
 src/review_agent/        код (таблица модулей ниже)
-tests/                   pytest: test_<модуль>.py, test_register_script.py, test_docs.py
+tests/                   pytest: test_<модуль>.py, test_register_script.py, test_set_home_scripts.py, test_docs.py
   conftest.py            временные git-репозитории для тестов
   fixtures/opencode/     реальный экспорт сессии OpenCode (разбор токенов)
   fixtures/file_links/   отчёты с путями (переписывание ссылок)
 src/review_agent/prompts/  встроенный шаблон промпта (package data)
 scripts/register-task.ps1  регистрация задачи Task Scheduler
+scripts/set-home.ps1, set-home.sh  команда review-agent в PATH + REVIEW_AGENT_HOME (Windows / macOS)
 docs/                    документация для пользователя (см. ниже)
 openspec/specs/          действующие спецификации по capability
 openspec/changes/        текущие change; archive/ — завершённые, с validation-notes.md
@@ -284,7 +301,7 @@ README.md                справочник пользователя: уста
 | Модуль | Ответственность |
 | --- | --- |
 | `cli.py` | точки входа `review-agent`, `poll`, `usage`, `prompt-check`; ручной режим |
-| `config.py` | загрузка и проверка конфига, значения по умолчанию, настройки проекта |
+| `config.py` | поиск конфига (`--config` → `REVIEW_AGENT_HOME` → текущая папка), загрузка и проверка, пути от папки конфига, значения по умолчанию, настройки проекта |
 | `pipeline.py` | движок одного ревью: worktree → промпт → `opencode.json` → харнесс → учёт → уборка |
 | `worktree.py` | изолированный `git worktree`, гарантированное удаление, сироты |
 | `prompt.py` | рендер промпта из Jinja2-шаблона, поиск инструкций и docs целевого репо по спискам-кандидатам |
@@ -325,6 +342,7 @@ README.md                справочник пользователя: уста
 | `managed-repo-cache` | `repo_source.py` |
 | `review-usage-accounting` | `usage_source.py`, `usage_ledger.py`, `usage_prices.py`, `usage_summary.py`, `review_stats.py`, `quota_prompt.py` |
 | `scheduled-task-registration` | `scripts/register-task.ps1` |
+| `review-agent-home` | `config.py`, `cli.py`, `scripts/set-home.ps1`, `scripts/set-home.sh` |
 
 **`docs/`:**
 

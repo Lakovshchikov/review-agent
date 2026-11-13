@@ -5,6 +5,9 @@ review-agent сам ничего не планирует: каждый вызо�
 создаёт `scripts/register-task.ps1` (встроенный модуль `ScheduledTasks`,
 ничего ставить не нужно).
 
+Задача от переменной `REVIEW_AGENT_HOME` не зависит: `register-task.ps1`
+передаёт `poll` полный путь к конфигу (`--config`) и сам задаёт рабочую папку.
+
 Собирать exe не нужно. Задача запускает `review-agent.exe` из venv
 проекта — маленький запускатель, который создаёт `pip install -e .`
 (`.venv\Scripts\review-agent.exe`). Сборка в один бандл (PyInstaller и т.п.)

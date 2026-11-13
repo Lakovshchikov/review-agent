@@ -94,3 +94,17 @@ def test_readme_config_example_is_a_valid_config(tmp_path):
     path.write_text(block.group(1), encoding="utf-8")
     config = load_config(path)
     assert config.gitlab is not None and config.gitlab.projects
+
+
+def test_readme_mentions_every_set_home_option():
+    readme = _readme()
+    ps1 = (ROOT / "scripts" / "set-home.ps1").read_text(encoding="utf-8-sig")
+    block = re.search(r"^param\((.*?)^\)", ps1, re.MULTILINE | re.DOTALL).group(1)
+    ps1_params = re.findall(r"\]\s*\$(\w+)", block)
+    assert {"DryRun", "Remove"} <= set(ps1_params)
+    sh = (ROOT / "scripts" / "set-home.sh").read_text(encoding="utf-8")
+    sh_options = re.findall(r"^\s+(--[a-z-]+)[|)\s]", sh, re.MULTILINE)
+    assert {"--dry-run", "--remove", "--rc-file"} <= set(sh_options)
+    missing = [f"-{p}" for p in ps1_params if f"`-{p}" not in readme]
+    missing += [o for o in sh_options if o != "--help" and f"`{o}" not in readme]
+    assert not missing, f"README.md does not mention set-home options: {missing}"

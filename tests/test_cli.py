@@ -548,3 +548,66 @@ def test_prompt_check_config_error_exits_two(tmp_path, capsys):
 
     assert cli.main(["prompt-check", "--config", str(tmp_path / "absent.yaml")]) == 2
     assert "Ошибка конфигурации" in capsys.readouterr().err
+
+
+# -- config lookup through REVIEW_AGENT_HOME (review-agent-home) ----------------
+
+
+def test_poll_finds_config_through_home_variable(tmp_path, monkeypatch):
+    from review_agent import cli, polling
+
+    captured = {}
+    monkeypatch.setattr(polling, "run_poll", lambda **kwargs: captured.update(kwargs) or 0)
+    monkeypatch.setenv("REVIEW_AGENT_HOME", str(tmp_path))
+
+    assert cli.main(["poll"]) == 0
+    assert captured["config_path"] == tmp_path / "config.yaml"
+
+    assert cli.main(["poll", "--config", "own.yaml"]) == 0
+    assert str(captured["config_path"]) == "own.yaml"
+
+
+def test_manual_review_from_another_folder_stays_in_the_home(
+    git_repo_with_base_and_head, tmp_path, monkeypatch, capsys
+):
+    import yaml
+
+    from review_agent import cli
+
+    _stub_harness(monkeypatch)
+    home = tmp_path / "home"
+    home.mkdir()
+    config = _manual_config(home)
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data["report"]["output_path"] = "reports/review-{run_id}.md"
+    data["storage"]["work_dir"] = "work"
+    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("REVIEW_AGENT_HOME", str(home))
+    fixture = git_repo_with_base_and_head
+
+    code = cli.main(
+        ["--repo", str(fixture["repo"]), "--base", fixture["base_sha"], "--head", fixture["head_sha"]]
+    )
+
+    assert code == 0
+    reports = list((home / "reports").glob("review-*.md"))
+    assert len(reports) == 1
+    assert str(reports[0]) in capsys.readouterr().out
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_usage_and_prompt_check_use_the_home_config(tmp_path, monkeypatch, capsys):
+    from review_agent import cli
+
+    _manual_config(tmp_path)
+    monkeypatch.setenv("REVIEW_AGENT_HOME", str(tmp_path))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    assert cli.usage_main([], fetch=lambda url: PRICES) == 0
+    assert cli.prompt_check_main([]) == 0
+    assert list(elsewhere.iterdir()) == []

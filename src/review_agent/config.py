@@ -351,7 +351,11 @@ def load_config(path: str | Path) -> Config:
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(f"Could not read config file '{path}': {exc}") from exc
+        raise ConfigError(
+            f"Could not read config file '{path}': {exc}. Pass --config <file> or set "
+            f"{HOME_ENV_VAR} to the folder with config.yaml"
+        ) from exc
+    base = _base_dir(path)
 
     try:
         data = yaml.safe_load(raw_text)
@@ -377,9 +381,12 @@ def load_config(path: str | Path) -> Config:
     report_data = _require(data, "report", "<root>")
     if not isinstance(report_data, dict):
         raise ConfigError("'report' must be a mapping")
-    report = ReportConfig(output_path=_require(report_data, "output_path", "report"))
+    output_path = _require(report_data, "output_path", "report")
+    if not isinstance(output_path, str):
+        raise ConfigError("'report.output_path' must be a string")
+    report = ReportConfig(output_path=_absolute(output_path, base))
 
-    skills = _skills_list(data.get("skills", []), "skills")
+    skills = _skills_list(data.get("skills", []), "skills", base)
 
     safety_data = data.get("safety", {})
     if not isinstance(safety_data, dict):
@@ -394,11 +401,11 @@ def load_config(path: str | Path) -> Config:
         safety_kwargs["denied_bash_patterns"] = denied
     safety = SafetyConfig(**safety_kwargs)
 
-    gitlab = _load_gitlab(data["gitlab"]) if data.get("gitlab") is not None else None
-    storage = _load_storage(data.get("storage"))
+    gitlab = _load_gitlab(data["gitlab"], base) if data.get("gitlab") is not None else None
+    storage = _load_storage(data.get("storage"), base)
     usage = _load_usage(data.get("usage"))
     # Built-in defaults <- global section; projects merge on top of this.
-    prompt = merge_prompt(PromptSettings(), _load_prompt(data.get("prompt"), "prompt"))
+    prompt = merge_prompt(PromptSettings(), _load_prompt(data.get("prompt"), "prompt", base))
 
     return Config(
         provider=provider,
@@ -413,25 +420,44 @@ def load_config(path: str | Path) -> Config:
     )
 
 
-def _absolute(path: str) -> str:
-    """A configured file path made absolute once, at load time.
+HOME_ENV_VAR = "REVIEW_AGENT_HOME"
+CONFIG_FILE_NAME = "config.yaml"
 
-    Relative paths still mean "from the process's current folder", but the
-    harness works inside the worktree, so it must never see a relative one.
+
+def resolve_config_path(explicit: str | Path | None = None) -> Path:
+    """Which config file to load: `--config`, then $REVIEW_AGENT_HOME, then the current folder."""
+    if explicit:
+        return Path(explicit)
+    home = os.environ.get(HOME_ENV_VAR)
+    if home:
+        return Path(home) / CONFIG_FILE_NAME
+    return Path(CONFIG_FILE_NAME)
+
+
+def _base_dir(config_path: Path) -> Path:
+    """The folder relative paths of the config are resolved from."""
+    return config_path.resolve().parent
+
+
+def _absolute(path: str, base: Path) -> str:
+    """A configured path made absolute once, at load time, from the config's folder.
+
+    The harness works inside the worktree, so it must never see a relative
+    path; and the result must not depend on the folder the command runs from.
     """
-    return os.path.abspath(path)
+    return os.path.abspath(os.path.join(base, path))
 
 
-def _skills_list(value: Any, field: str) -> list[str]:
+def _skills_list(value: Any, field: str, base: Path) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(s, str) and s for s in value):
         raise ConfigError(f"'{field}' must be a list of file paths")
-    return [_absolute(s) for s in value]
+    return [_absolute(s, base) for s in value]
 
 
 _PROMPT_KEYS = ("template", "instruction_files", "docs_dirs")
 
 
-def _load_prompt(prompt_data: Any, section: str) -> PromptOverrides | None:
+def _load_prompt(prompt_data: Any, section: str, base: Path) -> PromptOverrides | None:
     """A `prompt` section (global or a project's) as per-key overrides.
 
     Unknown keys are rejected: a typo would otherwise silently fall back
@@ -453,7 +479,7 @@ def _load_prompt(prompt_data: Any, section: str) -> PromptOverrides | None:
         if value is None or value == BUILTIN_TEMPLATE:
             template = BUILTIN_TEMPLATE
         elif isinstance(value, str) and value:
-            template = _absolute(value)
+            template = _absolute(value, base)
         else:
             raise ConfigError(
                 f"'{section}.template' must be a file path or null (the built-in template)"
@@ -482,9 +508,9 @@ def _positive_int(value: Any, field: str) -> int:
     return value
 
 
-def _load_storage(storage_data: Any) -> StorageConfig:
+def _load_storage(storage_data: Any, base: Path) -> StorageConfig:
     if storage_data is None:
-        return StorageConfig()
+        return StorageConfig(work_dir=_absolute(DEFAULT_WORK_DIR, base))
     if not isinstance(storage_data, dict):
         raise ConfigError("'storage' must be a mapping")
     work_dir = storage_data.get("work_dir", DEFAULT_WORK_DIR)
@@ -497,7 +523,7 @@ def _load_storage(storage_data: Any) -> StorageConfig:
     if repo_retention_days is not None:
         repo_retention_days = _positive_int(repo_retention_days, "storage.repo_retention_days")
     return StorageConfig(
-        work_dir=work_dir,
+        work_dir=_absolute(work_dir, base),
         retention_days=retention_days,
         repo_retention_days=repo_retention_days,
     )
@@ -581,10 +607,10 @@ def best_effort_work_dir(path: str | Path) -> Path:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         work_dir = data["storage"]["work_dir"]
         if isinstance(work_dir, str) and work_dir:
-            return Path(work_dir)
+            return Path(_absolute(work_dir, _base_dir(Path(path))))
     except Exception:  # noqa: BLE001 - any problem means "use the default"
         pass
-    return Path(DEFAULT_WORK_DIR)
+    return Path(_absolute(DEFAULT_WORK_DIR, _base_dir(Path(path))))
 
 
 def _non_empty_str_list(value: Any, field: str) -> list[str]:
@@ -597,7 +623,7 @@ def _non_empty_str_list(value: Any, field: str) -> list[str]:
     return value
 
 
-def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
+def _load_gitlab(gitlab_data: Any, base: Path) -> GitLabConfig:
     if not isinstance(gitlab_data, dict):
         raise ConfigError("'gitlab' must be a mapping")
 
@@ -643,8 +669,8 @@ def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
             project_provider = _load_provider(project_provider, f"{section}.provider")
         project_skills = project_data.get("skills")
         if project_skills is not None:
-            project_skills = _skills_list(project_skills, f"{section}.skills")
-        project_prompt = _load_prompt(project_data.get("prompt"), f"{section}.prompt")
+            project_skills = _skills_list(project_skills, f"{section}.skills", base)
+        project_prompt = _load_prompt(project_data.get("prompt"), f"{section}.prompt", base)
         if enabled and not (project_reviewers if project_reviewers is not None else reviewers):
             raise ConfigError(
                 f"'{section}' ({path}) has no reviewers: set 'reviewers' for this "
@@ -653,7 +679,7 @@ def _load_gitlab(gitlab_data: Any) -> GitLabConfig:
         projects.append(
             GitLabProjectConfig(
                 path=path,
-                local_repo=local_repo,
+                local_repo=_absolute(local_repo, base) if local_repo is not None else None,
                 remote=remote,
                 enabled=enabled,
                 reviewers=project_reviewers,

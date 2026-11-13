@@ -23,7 +23,7 @@ def test_example_config_loads_without_error():
     assert config.gitlab.min_report_chars == 200
     assert config.gitlab.projects[0].path == "b2c/front-shopping"
     assert config.gitlab.claim_ttl_minutes == 240
-    assert config.storage.work_dir == "./.review-agent"
+    assert config.storage.work_dir == str(EXAMPLE_CONFIG.parent / ".review-agent")
     assert config.storage.retention_days == 7
     assert config.storage.repo_retention_days == 30
     assert config.gitlab.projects[0].local_repo is None
@@ -133,7 +133,7 @@ def test_valid_gitlab_section_loads_with_defaults(tmp_path):
     project = config.gitlab.projects[0]
     assert (project.path, project.local_repo, project.remote, project.local_remote) == (
         "b2c/front-shopping",
-        "C:/repos/front",
+        os.path.abspath("C:/repos/front"),
         None,
         "origin",
     )
@@ -165,7 +165,6 @@ import dataclasses
 import yaml
 
 from review_agent.config import (
-    DEFAULT_WORK_DIR,
     best_effort_work_dir,
     effective_settings,
 )
@@ -194,14 +193,14 @@ def test_config_without_new_fields_keeps_old_behaviour(tmp_path):
     assert project.enabled is True
     assert project.reviewers is project.review_drafts is project.provider is project.skills is None
     assert config.gitlab.claim_ttl_minutes == 240
-    assert config.storage.work_dir == DEFAULT_WORK_DIR
+    assert config.storage.work_dir == str(tmp_path / ".review-agent")
     assert config.storage.retention_days == 7
 
     settings = effective_settings(config, project)
     assert settings.reviewers == ["bot"]
     assert settings.review_drafts is False
     assert settings.config.provider == config.provider
-    assert settings.config.skills == [os.path.abspath("global-skill.md")]
+    assert settings.config.skills == [str(tmp_path / "global-skill.md")]
 
 
 def test_project_overrides_replace_global_values(tmp_path):
@@ -232,7 +231,7 @@ def test_project_overrides_replace_global_values(tmp_path):
     assert settings.config.provider.api_key_env is None  # replaced whole, not merged
     assert settings.config.skills == []
     # The global config itself is untouched.
-    assert config.provider.name == "openai" and config.skills == [os.path.abspath("global-skill.md")]
+    assert config.provider.name == "openai" and config.skills == [str(tmp_path / "global-skill.md")]
     assert dataclasses.replace(settings.config, provider=config.provider, skills=config.skills) == config
 
 
@@ -309,12 +308,12 @@ def test_invalid_project_overrides(tmp_path, project_extra, message):
 
 def test_storage_section(tmp_path):
     config = load_config(_write_cfg(tmp_path, storage={"work_dir": "D:/ra", "retention_days": 30}))
-    assert config.storage.work_dir == "D:/ra"
+    assert config.storage.work_dir == os.path.abspath("D:/ra")
     assert config.storage.retention_days == 30
 
     config = load_config(_write_cfg(tmp_path, storage={"retention_days": None}))
     assert config.storage.retention_days is None
-    assert config.storage.work_dir == DEFAULT_WORK_DIR
+    assert config.storage.work_dir == str(tmp_path / ".review-agent")
 
 
 def test_repo_retention_days(tmp_path):
@@ -375,12 +374,12 @@ def test_invalid_claim_ttl(tmp_path, bad):
 def test_best_effort_work_dir(tmp_path):
     good = tmp_path / "good.yaml"
     good.write_text("storage:\n  work_dir: ./my-work\nprovider: broken\n", encoding="utf-8")
-    assert best_effort_work_dir(good) == Path("./my-work")
+    assert best_effort_work_dir(good) == tmp_path / "my-work"
 
     broken = tmp_path / "broken.yaml"
     broken.write_text("provider: [unclosed\n", encoding="utf-8")
-    assert best_effort_work_dir(broken) == Path(DEFAULT_WORK_DIR)
-    assert best_effort_work_dir(tmp_path / "missing.yaml") == Path(DEFAULT_WORK_DIR)
+    assert best_effort_work_dir(broken) == tmp_path / ".review-agent"
+    assert best_effort_work_dir(tmp_path / "missing.yaml") == tmp_path / ".review-agent"
 
 
 # -- usage accounting (review-usage-accounting) -------------------------------
@@ -481,7 +480,7 @@ def test_project_overrides_only_template(tmp_path):
         )
     )
     own = effective_settings(config, config.gitlab.projects[0]).config.prompt
-    assert own.template == os.path.abspath("prompts/backend.md.j2")
+    assert own.template == str(tmp_path / "prompts" / "backend.md.j2")
     assert own.instruction_files == ["CONTRIBUTING.md"]
     assert own.docs_dirs == ["wiki"]
     other = effective_settings(config, config.gitlab.projects[1]).config.prompt
@@ -512,11 +511,11 @@ def test_project_null_template_means_builtin_absent_means_inherit(tmp_path):
             ),
         )
     )
-    assert config.prompt.template == os.path.abspath("global.md.j2")
+    assert config.prompt.template == str(tmp_path / "global.md.j2")
     assert effective_settings(config, config.gitlab.projects[0]).config.prompt.template is None
     assert config.gitlab.projects[0].prompt.template == BUILTIN_TEMPLATE
     inherited = effective_settings(config, config.gitlab.projects[1]).config.prompt
-    assert inherited.template == os.path.abspath("global.md.j2")
+    assert inherited.template == str(tmp_path / "global.md.j2")
 
 
 def test_builtin_name_as_template_value(tmp_path):
@@ -560,3 +559,59 @@ def test_relative_paths_made_absolute_against_cwd(tmp_path, monkeypatch):
     project = config.gitlab.projects[0]
     assert project.skills == [str(tmp_path / "skills" / "p.md")]
     assert project.prompt.template == str(tmp_path / "p.md.j2")
+
+
+# -- config lookup and path base (review-agent-home) ---------------------------
+
+from review_agent.config import HOME_ENV_VAR, resolve_config_path  # noqa: E402
+
+
+def test_explicit_config_wins_over_home(tmp_path, monkeypatch):
+    monkeypatch.setenv(HOME_ENV_VAR, str(tmp_path / "home"))
+    assert resolve_config_path("other.yaml") == Path("other.yaml")
+
+
+def test_home_variable_is_used_without_explicit_config(tmp_path, monkeypatch):
+    monkeypatch.setenv(HOME_ENV_VAR, str(tmp_path / "home"))
+    assert resolve_config_path(None) == tmp_path / "home" / "config.yaml"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_current_folder_is_the_fallback(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv(HOME_ENV_VAR, raising=False)
+    else:
+        monkeypatch.setenv(HOME_ENV_VAR, value)
+    assert resolve_config_path(None) == Path("config.yaml")
+
+
+def test_missing_config_error_mentions_home_and_option(tmp_path):
+    with pytest.raises(ConfigError, match="REVIEW_AGENT_HOME"):
+        load_config(tmp_path / "nope.yaml")
+
+
+def test_relative_paths_are_resolved_from_the_config_folder_not_cwd(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    config = load_config(
+        _write_cfg(
+            home,
+            storage={"work_dir": "./.review-agent"},
+            prompt={"template": "prompts/own.md.j2"},
+            gitlab=_projects({"path": "a/b", "local_repo": "clones/b"}),
+        )
+    )
+    assert config.report.output_path == str(home / "out-{run_id}.md")
+    assert config.storage.work_dir == str(home / ".review-agent")
+    assert config.skills == [str(home / "global-skill.md")]
+    assert config.prompt.template == str(home / "prompts" / "own.md.j2")
+    assert config.gitlab.projects[0].local_repo == str(home / "clones" / "b")
+
+
+def test_absolute_paths_stay_as_they_are(tmp_path):
+    absolute = str(tmp_path / "somewhere" / "work")
+    config = load_config(_write_cfg(tmp_path, storage={"work_dir": absolute}))
+    assert config.storage.work_dir == absolute
