@@ -33,7 +33,7 @@ Warn = Callable[[str], None]
 class RunLabels:
     """Who started the run and for what - known to the caller, not the engine."""
 
-    source: str  # "poll" | "manual"
+    source: str  # "poll" | "poll-again" (a further round) | "manual"
     project: str | None = None
     mr_iid: int | None = None
 
@@ -79,11 +79,13 @@ def build_review_record(
     findings: dict[str, int] | None,
     quota: QuotaReading | None,
     prompt_template: str | None = None,
+    rereview_prompt: bool = False,
 ) -> dict[str, Any]:
     """The ledger record of one review run; every key is always present.
 
-    `prompt_template` None = the built-in template. Its hash covers the
-    template file's own content only, not templates it extends.
+    `prompt_template` None = the built-in template (of a further review
+    round with `rereview_prompt`). Its hash covers the template file's
+    own content only, not templates it extends.
     """
     totals = usage.totals if usage is not None else None
     missing_reason = usage.missing_reason if usage is not None else "usage not collected"
@@ -100,8 +102,8 @@ def build_review_record(
         "gen_ai.request.model": provider.model,
         "review.reasoning_effort": provider.reasoning_effort,
         "review.skills": [Path(s).name for s in skills],
-        "review.prompt.template": template_label(prompt_template),
-        "review.prompt.sha256": template_sha256(prompt_template),
+        "review.prompt.template": template_label(prompt_template, rereview=rereview_prompt),
+        "review.prompt.sha256": template_sha256(prompt_template, rereview=rereview_prompt),
         "review.harness.name": usage.harness_name if usage is not None else None,
         "review.harness.version": usage.harness_version if usage is not None else None,
         "review.outcome": outcome,
@@ -222,6 +224,7 @@ class UsageRecorder:
         report: str | None,
         quota: QuotaReading | None,
         prompt_template: str | None = None,
+        rereview_prompt: bool = False,
     ) -> None:
         try:
             change = measure_change(worktree_path, base_sha, head_sha)
@@ -246,6 +249,7 @@ class UsageRecorder:
                 findings=count_findings(report),
                 quota=quota,
                 prompt_template=prompt_template,
+                rereview_prompt=rereview_prompt,
             )
             append_record(self.ledger_path, record, self.warn_once)
         except Exception as exc:  # noqa: BLE001 - accounting never affects the review

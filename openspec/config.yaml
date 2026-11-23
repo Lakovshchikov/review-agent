@@ -71,7 +71,13 @@ context: |
   от папки конфига, scripts/set-home.ps1 / set-home.sh. Проверен вживую на
   Windows (боевой MR, весь проход); macOS — только тестами (validation-notes.md).
 
-  Дорожная карта п.1–9 выполнена; следующие change — из бэклога AGENTS.md п.7.
+  10. rereview-mr — применён, ждёт живой проверки (openspec/changes/rereview-mr).
+  Повторное ручное ревью MR: `poll --again` (только интерактивно), в промпт
+  вставляются прошлый отчёт бота и реплики после него, результат — новый
+  комментарий; шаблон prompts/rereview.md.j2 и ключи prompt.rereview_template,
+  prompt.rereview_max_reply_chars.
+
+  Дорожная карта п.1–9 выполнена, п.10 ждёт архивации; следующие change — из бэклога AGENTS.md п.7.
 
   Все артефакты и ответы агента по умолчанию — на русском языке.
 

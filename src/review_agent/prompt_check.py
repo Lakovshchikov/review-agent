@@ -30,12 +30,19 @@ from jinja2.utils import missing
 
 from review_agent.config import Config, GitLabProjectConfig, PromptSettings, effective_settings
 from review_agent.prompt import (
+    REREVIEW_VARIABLES,
     TEMPLATE_VARIABLES,
+    PromptReply,
+    RereviewContext,
     is_builtin,
     make_environment,
     template_context,
     template_label,
 )
+
+# Not looked for in the rendered text: a flag, not text - a template that
+# never mentions "older comments were left out" is legitimate.
+_NOT_TEXT = ("replies_truncated",)
 
 ERROR = "error"
 WARNING = "warning"
@@ -65,10 +72,17 @@ class TemplateReport:
     issues: list[PromptIssue]
     # The prompt rendered with readable sample values; None if it cannot render.
     preview: str | None = None
+    # The template of a further review round (`poll --again`), not of the first review.
+    rereview: bool = False
 
     @property
     def label(self) -> str:
-        return template_label(self.template)
+        return template_label(self.template, rereview=self.rereview)
+
+    @property
+    def title(self) -> str:
+        """Label plus the kind of prompt, for lines of the report."""
+        return self.label + (" [повторное ревью]" if self.rereview else "")
 
 
 @dataclasses.dataclass
@@ -95,7 +109,7 @@ class CheckResult:
         for report in self.reports:
             if only_problems and not report.issues:
                 continue
-            lines.append(f"  {report.label}  ({', '.join(report.users)})")
+            lines.append(f"  {report.title}  ({', '.join(report.users)})")
             if not report.issues:
                 lines.append("    OK")
             for issue in report.issues:
@@ -112,7 +126,34 @@ def _token(name: str) -> str:
     return f"{name}__{_MARK}"
 
 
-def _marked_context() -> dict[str, Any]:
+def _marked_rereview() -> RereviewContext:
+    return RereviewContext(
+        previous_report=_token("previous_report"),
+        previous_sha=_token("previous_sha"),
+        head_sha=_token("head_sha"),
+        replies=[
+            PromptReply(
+                author=_token("replies"), created_at=_token("replies"), body=_token("replies")
+            )
+        ],
+        replies_truncated=True,
+    )
+
+
+def _sample_rereview() -> RereviewContext:
+    return RereviewContext(
+        previous_report="(текст предыдущего отчёта бота)",
+        previous_sha="1111111111111111111111111111111111111111",
+        head_sha="2222222222222222222222222222222222222222",
+        replies=[
+            PromptReply("developer", "2026-11-21T09:00:00Z", "Поправил, см. новый коммит."),
+            PromptReply("reviewer", "2026-11-21T10:30:00Z", "По п.2 не согласен, это намеренно."),
+        ],
+        replies_truncated=False,
+    )
+
+
+def _marked_context(rereview: bool = False) -> dict[str, Any]:
     """Every variable gets a value carrying a unique token; optional ones are non-empty
     so that conditional sections render too. Paths keep the token in their
     name, so `{{ path.name }}` still counts as use."""
@@ -125,10 +166,13 @@ def _marked_context() -> dict[str, Any]:
         repo_instructions_path=base / _token("repo_instructions_path"),
         docs_path=base / _token("docs_path"),
         skill_paths=[base / _token("skill_paths")],
+        rereview=_marked_rereview() if rereview else None,
     )
 
 
-def _sample_context(skills: Iterable[str], prompt: PromptSettings) -> dict[str, Any]:
+def _sample_context(
+    skills: Iterable[str], prompt: PromptSettings, rereview: bool = False
+) -> dict[str, Any]:
     """Readable values for --show, as if the first candidate of each list were found."""
     worktree = Path("/review-agent/tmp/<run_id>/worktree")
     return template_context(
@@ -139,6 +183,7 @@ def _sample_context(skills: Iterable[str], prompt: PromptSettings) -> dict[str, 
         repo_instructions_path=worktree / prompt.instruction_files[0] if prompt.instruction_files else None,
         docs_path=worktree / prompt.docs_dirs[0] if prompt.docs_dirs else None,
         skill_paths=[Path(s) for s in skills],
+        rereview=_sample_rereview() if rereview else None,
     )
 
 
@@ -189,22 +234,27 @@ def check_template(
     *,
     want_preview: bool = False,
     prompt: PromptSettings | None = None,
+    rereview: bool = False,
 ) -> tuple[list[PromptIssue], str | None]:
     """All problems of one template (+ its skill files), and optionally a preview.
 
     `prompt` only shapes the preview (its candidate lists); None = defaults.
+    `rereview` checks the template of a further review round, which has
+    more variables.
     """
     issues: list[PromptIssue] = []
     skills = list(skills)
-    if not is_builtin(template) and not os.path.isfile(template):
+    if not is_builtin(template, rereview=rereview) and not os.path.isfile(template):
         issues.append(PromptIssue(ERROR, f"файл шаблона не найден: {template}"))
         return issues + _skill_issues(skills), None
 
     unknown: list[str] = []
-    env, name = make_environment(template, undefined=_recording_undefined(unknown))
+    env, name = make_environment(
+        template, undefined=_recording_undefined(unknown), rereview=rereview
+    )
     rendered: str | None = None
     try:
-        rendered = env.get_template(name).render(_marked_context())
+        rendered = env.get_template(name).render(_marked_context(rereview))
     except TemplateSyntaxError as exc:
         where = f"{exc.filename or exc.name or name}, строка {exc.lineno}"
         issues.append(PromptIssue(ERROR, f"синтаксическая ошибка ({where}): {exc.message}"))
@@ -215,7 +265,10 @@ def check_template(
     issues.extend(PromptIssue(ERROR, message) for message in unknown)
 
     if rendered is not None:
-        for variable in TEMPLATE_VARIABLES:
+        variables = TEMPLATE_VARIABLES + (REREVIEW_VARIABLES if rereview else ())
+        for variable in variables:
+            if variable in _NOT_TEXT:
+                continue
             if _token(variable) not in rendered:
                 issues.append(
                     PromptIssue(
@@ -227,9 +280,9 @@ def check_template(
 
     preview = None
     if want_preview and not any(i.level == ERROR for i in issues):
-        strict_env, strict_name = make_environment(template)
+        strict_env, strict_name = make_environment(template, rereview=rereview)
         preview = strict_env.get_template(strict_name).render(
-            _sample_context(skills, prompt or PromptSettings())
+            _sample_context(skills, prompt or PromptSettings(), rereview)
         )
     return issues, preview
 
@@ -246,28 +299,43 @@ def _skill_issues(skills: list[str]) -> list[PromptIssue]:
 
 
 def check_settings(
-    targets: Iterable[tuple[str, PromptSettings, list[str]]], *, want_preview: bool = False
+    targets: Iterable[tuple[str, PromptSettings, list[str]]],
+    *,
+    want_preview: bool = False,
+    rereview: bool = False,
 ) -> CheckResult:
     """Check (user label, prompt settings, skills) triples; identical combinations once.
 
     Candidate lists are not checked: they are looked up in the reviewed
     repository, and an absent candidate is a normal case. They only shape
     the preview, so with `want_preview` they also tell combinations apart.
+
+    With `rereview`, the template of a further review round is checked
+    too (after all first-review templates in the result).
     """
+    targets = list(targets)
     reports: dict[tuple[Any, ...], TemplateReport] = {}
-    for user, prompt, skills in targets:
-        key: tuple[Any, ...] = (prompt.template, tuple(skills))
-        if want_preview:
-            key += (tuple(prompt.instruction_files), tuple(prompt.docs_dirs))
-        if key in reports:
-            reports[key].users.append(user)
-            continue
-        issues, preview = check_template(
-            prompt.template, skills, want_preview=want_preview, prompt=prompt
-        )
-        reports[key] = TemplateReport(
-            template=prompt.template, skills=key[1], users=[user], issues=issues, preview=preview
-        )
+    kinds = (False, True) if rereview else (False,)
+    for is_rereview in kinds:
+        for user, prompt, skills in targets:
+            template = prompt.rereview_template if is_rereview else prompt.template
+            key: tuple[Any, ...] = (is_rereview, template, tuple(skills))
+            if want_preview:
+                key += (tuple(prompt.instruction_files), tuple(prompt.docs_dirs))
+            if key in reports:
+                reports[key].users.append(user)
+                continue
+            issues, preview = check_template(
+                template, skills, want_preview=want_preview, prompt=prompt, rereview=is_rereview
+            )
+            reports[key] = TemplateReport(
+                template=template,
+                skills=key[2],
+                users=[user],
+                issues=issues,
+                preview=preview,
+                rereview=is_rereview,
+            )
     return CheckResult(reports=list(reports.values()))
 
 

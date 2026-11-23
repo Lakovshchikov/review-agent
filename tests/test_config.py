@@ -615,3 +615,77 @@ def test_absolute_paths_stay_as_they_are(tmp_path):
     absolute = str(tmp_path / "somewhere" / "work")
     config = load_config(_write_cfg(tmp_path, storage={"work_dir": absolute}))
     assert config.storage.work_dir == absolute
+
+
+# -- re-review settings (poll --again) -------------------------------------------
+
+from review_agent.prompt import BUILTIN_REREVIEW_TEMPLATE, DEFAULT_REREVIEW_MAX_REPLY_CHARS
+
+
+def test_rereview_defaults_when_nothing_set(tmp_path):
+    config = load_config(_write_cfg(tmp_path, gitlab=_projects({"path": "a/b"})))
+    assert config.prompt.rereview_template is None
+    assert config.prompt.rereview_max_reply_chars == DEFAULT_REREVIEW_MAX_REPLY_CHARS == 20000
+    own = effective_settings(config, config.gitlab.projects[0]).config.prompt
+    assert own.rereview_template is None and own.rereview_max_reply_chars == 20000
+
+
+def test_project_overrides_only_the_rereview_template(tmp_path):
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            prompt={"rereview_template": "global-re.md.j2", "rereview_max_reply_chars": 5000},
+            gitlab=_projects(
+                {"path": "a/b", "prompt": {"rereview_template": "prompts/mine.md.j2"}},
+                {"path": "c/d"},
+            ),
+        )
+    )
+    first = effective_settings(config, config.gitlab.projects[0]).config.prompt
+    assert first.rereview_template == str(tmp_path / "prompts" / "mine.md.j2")
+    assert first.rereview_max_reply_chars == 5000  # inherited
+    other = effective_settings(config, config.gitlab.projects[1]).config.prompt
+    assert other.rereview_template == str(tmp_path / "global-re.md.j2")
+
+
+def test_null_rereview_template_means_builtin_and_does_not_touch_template(tmp_path):
+    config = load_config(
+        _write_cfg(
+            tmp_path,
+            prompt={"template": "t.md.j2", "rereview_template": "global-re.md.j2"},
+            gitlab=_projects({"path": "a/b", "prompt": {"rereview_template": None}}),
+        )
+    )
+    assert config.gitlab.projects[0].prompt.rereview_template == BUILTIN_REREVIEW_TEMPLATE
+    own = effective_settings(config, config.gitlab.projects[0]).config.prompt
+    assert own.rereview_template is None
+    assert own.template == str(tmp_path / "t.md.j2")
+
+
+def test_builtin_name_as_rereview_template_value(tmp_path):
+    config = load_config(_write_cfg(tmp_path, prompt={"rereview_template": BUILTIN_REREVIEW_TEMPLATE}))
+    assert config.prompt.rereview_template is None
+
+
+@pytest.mark.parametrize(
+    "prompt, match",
+    [
+        ({"rereview_template": 5}, r"'prompt.rereview_template' must be a file path or null"),
+        ({"rereview_max_reply_chars": 0}, r"'prompt.rereview_max_reply_chars' must be a positive integer"),
+        ({"rereview_max_reply_chars": "10"}, r"'prompt.rereview_max_reply_chars' must be a positive integer"),
+        ({"rereview_max_reply_chars": True}, r"'prompt.rereview_max_reply_chars' must be a positive integer"),
+    ],
+)
+def test_invalid_rereview_settings(tmp_path, prompt, match):
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write_cfg(tmp_path, prompt=prompt))
+
+
+def test_invalid_project_reply_limit_names_the_project_section(tmp_path):
+    with pytest.raises(ConfigError, match=r"rereview_max_reply_chars"):
+        load_config(
+            _write_cfg(
+                tmp_path,
+                gitlab=_projects({"path": "a/b", "prompt": {"rereview_max_reply_chars": -1}}),
+            )
+        )

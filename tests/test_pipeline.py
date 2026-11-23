@@ -348,3 +348,113 @@ def test_record_names_the_prompt_template(git_repo_with_base_and_head, tmp_path)
     record = read_records(recorder.ledger_path)[0][0]
     assert record["review.prompt.template"] == str(template)
     assert record["review.prompt.sha256"] == hashlib.sha256(template.read_bytes()).hexdigest()
+
+
+# -- a further review round (rereview) --------------------------------------------
+
+from review_agent.pipeline import RereviewInput  # noqa: E402
+from review_agent.prompt import PromptReply  # noqa: E402
+
+
+def _capturing(captured):
+    def stub(argv, **kwargs):
+        captured["prompt"] = argv[-1]
+        return subprocess.CompletedProcess(argv, 0, "# Отчёт", "")
+
+    return stub
+
+
+def test_rereview_prompt_has_previous_report_replies_and_commits(git_repo_with_base_and_head, tmp_path):
+    fixture = git_repo_with_base_and_head
+    captured = {}
+    rereview = RereviewInput(
+        previous_report="PREVIOUS REPORT BODY",
+        previous_sha=fixture["base_sha"],  # present in the repo
+        replies=[PromptReply("dev", "2026-11-21T09:00:00Z", "fixed it")],
+    )
+    _review(fixture, _capturing(captured), config_path=_config(tmp_path), rereview=rereview)
+
+    prompt = captured["prompt"]
+    assert "повторное ревью этого же MR" in prompt
+    assert "PREVIOUS REPORT BODY" in prompt and "fixed it" in prompt
+    assert f"git log {fixture['base_sha']}..{fixture['head_sha']}" in prompt
+    assert "diff --git" not in prompt
+
+
+def test_rereview_with_an_unreachable_previous_commit_still_runs_without_a_range(
+    git_repo_with_base_and_head, tmp_path
+):
+    captured = {}
+    rereview = RereviewInput(previous_report="OLD", previous_sha="f" * 40, replies=[])
+    result = _review(
+        git_repo_with_base_and_head, _capturing(captured), config_path=_config(tmp_path), rereview=rereview
+    )
+    assert result.report == "# Отчёт"
+    assert "недоступен" in captured["prompt"] and "git log" not in captured["prompt"]
+
+
+def test_rereview_without_a_previous_commit_in_the_marker(git_repo_with_base_and_head, tmp_path):
+    captured = {}
+    _review(
+        git_repo_with_base_and_head,
+        _capturing(captured),
+        config_path=_config(tmp_path),
+        rereview=RereviewInput(previous_report="OLD", previous_sha=None),
+    )
+    assert "git log" not in captured["prompt"]
+
+
+def test_rereview_cuts_replies_to_the_configured_limit(git_repo_with_base_and_head, tmp_path):
+    captured = {}
+    replies = [PromptReply(f"u{i}", "t", "x" * 100) for i in range(1, 6)]
+    config_path = _config(tmp_path, prompt={"rereview_max_reply_chars": 250})
+    _review(
+        git_repo_with_base_and_head,
+        _capturing(captured),
+        config_path=config_path,
+        rereview=RereviewInput("OLD", None, replies),
+    )
+    prompt = captured["prompt"]
+    assert 'author="u5"' in prompt and 'author="u4"' in prompt and 'author="u3"' not in prompt
+    assert "опущены" in prompt
+
+
+def test_rereview_uses_the_configured_template_and_the_ledger_says_so(git_repo_with_base_and_head, tmp_path):
+    template = tmp_path / "re.md.j2"
+    template.write_text("AGAIN {{ head_sha }} / {{ previous_report }}\n", encoding="utf-8")
+    captured = {}
+    recorder, _, _ = _recorder(tmp_path, StubSource())
+    fixture = git_repo_with_base_and_head
+    _review(
+        fixture,
+        _capturing(captured),
+        config_path=_config(tmp_path, prompt={"rereview_template": str(template)}),
+        usage=recorder,
+        labels=RunLabels(source="poll-again", project="a/b", mr_iid=1),
+        rereview=RereviewInput("OLD", None),
+    )
+    assert captured["prompt"] == f"AGAIN {fixture['head_sha']} / OLD\n"
+    record = read_records(recorder.ledger_path)[0][0]
+    assert record["review.source"] == "poll-again"
+    assert record["review.prompt.template"] == str(template)
+    assert record["review.prompt.sha256"] == hashlib.sha256(template.read_bytes()).hexdigest()
+
+
+def test_rereview_builtin_template_is_named_in_the_ledger(git_repo_with_base_and_head, tmp_path):
+    recorder, _, _ = _recorder(tmp_path, StubSource())
+    _review(
+        git_repo_with_base_and_head,
+        _ok,
+        config_path=_config(tmp_path),
+        usage=recorder,
+        rereview=RereviewInput("OLD", None),
+    )
+    record = read_records(recorder.ledger_path)[0][0]
+    assert record["review.prompt.template"] == "builtin/rereview.md.j2"
+    assert record["review.prompt.sha256"]
+
+
+def test_first_review_prompt_is_not_touched_by_rereview_support(git_repo_with_base_and_head, tmp_path):
+    captured = {}
+    _review(git_repo_with_base_and_head, _capturing(captured), config_path=_config(tmp_path))
+    assert "повторное ревью" not in captured["prompt"] and "previous_report" not in captured["prompt"]

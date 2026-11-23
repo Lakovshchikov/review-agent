@@ -101,7 +101,12 @@ agentic-харнесс с подключаемым провайдером мод
   группировку файлов, risk-zones, dependency-impact — агент строит это сам. Любые данные,
   которые оркестратор считает о MR (размер изменения и т.п.), агенту не
   передаются. Постобработка отчёта (ссылки на файлы) — детерминированная,
-  промпт ради неё не меняется.
+  промпт ради неё не меняется. **Единственное исключение — повторное
+  ревью** (`poll --again`, только вручную): в промпт отдельного шаблона
+  `prompts/rereview.md.j2` вставляются текст прошлого отчёта бота и реплики
+  после него (текстом, не путём: файл вне worktree агент не прочитает), а
+  историю коммитов с прошлого отчёта агент смотрит сам. Прошлый отчёт
+  может заякорить модель — это принятый риск, замер в `review-quality-eval`.
 - **Безопасность во время ревью — строго read-only.** Нельзя выполнять
   код/тесты/сборку/lint из MR; разрешены read-only `git`, `rg`, чтение
   файлов. Нет веб-доступа и прав на запись в GitLab — комментарий
@@ -119,8 +124,9 @@ agentic-харнесс с подключаемым провайдером мод
 - **Идемпотентность и состояние — только в GitLab**, не в локальном
   файле: маркер `<!-- ai-review: sha=<head_sha> -->` в комментарии бота,
   ключ `(project, MR iid, head_sha)`; claim «ревью выполняется» — тоже
-  комментарий. Это даёт будущую фичу «ревью на новый diff» без
-  переделки состояния.
+  комментарий. Это дало «ревью на новый diff» (`poll --again`) без
+  переделки состояния: последний отчёт бота на MR — последний комментарий с
+  маркером, номер раунда — число таких комментариев.
 - **Фильтр опроса** — только MR, где заданный пользователь (или список)
   указан как reviewer.
 - **Планировщик — не пишем свой cron/daemon.** Вся работа — один
@@ -176,6 +182,7 @@ change пропозится только после `apply` и ручной пр
 | 7 | `restructure-documentation` | README как справочник, `docs/`, карта репозитория и правило актуализации документации (п.10–11) | `archive/2026-10-04-restructure-documentation` |
 | 8 | `configurable-review-prompt` | промпт — Jinja2-шаблон (встроенный = baseline), `prompt` в конфиге с переопределением проекта по ключам, проверка шаблонов перед работой, `prompt-check` | `archive/2026-10-04-configurable-review-prompt` |
 | 9 | `global-launch-and-config-home` | запуск из любой папки: `REVIEW_AGENT_HOME`, конфиг и пути от папки конфига, скрипты `set-home.ps1` / `set-home.sh` (команда через pipx + переменная) | `archive/2026-11-13-global-launch-and-config-home` |
+| 10 | `rereview-mr` | повторное ручное ревью MR: `poll --again`, прошлый отчёт и реплики в промпте (`prompts/rereview.md.j2`), новый комментарий, `prompt.rereview_template` | `rereview-mr` (применён, ждёт живой проверки и архивации) |
 
 Пути архивов — относительно `openspec/changes/`.
 
@@ -195,7 +202,12 @@ change пропозится только после `apply` и ручной пр
 - рост профиля OpenCode (`opencode.db`, ~1,3 МБ на ревью) — не чистится;
 - авто-resolve AI-тредов при фиксе кода разработчиком;
 - self-generating best-practices ruleset из истории ревью+фидбека;
-- ревью на новый diff после правок (повторный прогон той же MR);
+- автоматическое ревью на новый diff (повторный раунд без участия
+  человека: по расписанию или по новому SHA) — ручной режим сделан в change
+  10 (`poll --again`), автоматический сознательно отложен: тратит квоту и
+  плодит комментарии;
+- замер анкоринга прошлым отчётом в повторном ревью (в рамках
+  `review-quality-eval`);
 - backend/другие стеки помимо frontend;
 - `set-home.sh` (macOS) проверен только тестами со stub-`pipx` в Git Bash,
   вживую на macOS не запускался; зависимости могут не собираться на самой
@@ -257,6 +269,7 @@ review-agent --help         # ручное ревью диапазона ком�
 review-agent poll --help    # проход опроса GitLab
 review-agent poll --dry-run # первый безопасный прогон на реальном GitLab
 review-agent poll --all --debug   # проход без вопросов, артефакты прогонов — в <work_dir>/debug/
+review-agent poll --again --dry-run   # повторное ревью отревьюенного MR (только интерактивно), комментарий — в dry-run/
 review-agent usage                # сводка расхода (--by model, --wide, --format csv)
 review-agent prompt-check --show  # проверка шаблонов промпта и предпросмотр (0/1/2)
 ```
@@ -285,7 +298,7 @@ tests/                   pytest: test_<модуль>.py, test_register_script.py
   conftest.py            временные git-репозитории для тестов
   fixtures/opencode/     реальный экспорт сессии OpenCode (разбор токенов)
   fixtures/file_links/   отчёты с путями (переписывание ссылок)
-src/review_agent/prompts/  встроенный шаблон промпта (package data)
+src/review_agent/prompts/  встроенные шаблоны промпта: default.md.j2, rereview.md.j2 (package data)
 scripts/register-task.ps1  регистрация задачи Task Scheduler
 scripts/set-home.ps1, set-home.sh  команда review-agent в PATH + REVIEW_AGENT_HOME (Windows / macOS)
 docs/                    документация для пользователя (см. ниже)
@@ -306,13 +319,14 @@ README.md                справочник пользователя: уста
 | `worktree.py` | изолированный `git worktree`, гарантированное удаление, сироты |
 | `prompt.py` | рендер промпта из Jinja2-шаблона, поиск инструкций и docs целевого репо по спискам-кандидатам |
 | `prompts/default.md.j2` | встроенный шаблон промпта (единственное место методологии по умолчанию) |
+| `prompts/rereview.md.j2` | шаблон повторного ревью: `extends` базового, добавляет прошлый отчёт и реплики в конец |
 | `prompt_check.py` | проверка шаблонов промпта, общий шаг «проверить перед работой» |
 | `harness_config.py` | `opencode.json` с read-only агентом, safety-note |
 | `harness.py` | вызов харнесса подпроцессом |
 | `report.py` | отчёт ручного режима в файл |
 | `polling.py` | проход `poll` целиком, коды выхода |
 | `gitlab.py` | всё общение с GitLab через `glab` |
-| `publishing.py` | маркеры ревью и claim'а, тело комментария, проверка отчёта (чистая логика) |
+| `publishing.py` | маркеры ревью и claim'а, прошлый отчёт и реплики после него, тело комментария, проверка отчёта (чистая логика) |
 | `file_links.py` | пути в отчёте → ссылки GitLab (чистая логика) |
 | `repo_source.py` | `local_repo` или кэш-клон, fetch веток MR, уборка кэша |
 | `housekeeping.py` | раскладка `work_dir`, очистка |
@@ -332,7 +346,8 @@ README.md                справочник пользователя: уста
 | Capability | Модули |
 | --- | --- |
 | `mr-review-engine` | `pipeline.py`, `worktree.py`, `prompt.py`, `harness.py`, `harness_config.py`, `report.py` |
-| `review-prompt-templates` | `prompt.py`, `prompts/default.md.j2`, `prompt_check.py`, `cli.py`, `polling.py` |
+| `review-prompt-templates` | `prompt.py`, `prompts/default.md.j2`, `prompts/rereview.md.j2`, `prompt_check.py`, `cli.py`, `polling.py` |
+| `mr-rereview` | `publishing.py`, `polling.py`, `prompt.py`, `prompts/rereview.md.j2`, `pipeline.py`, `worktree.py`, `cli.py` |
 | `mr-discovery` | `polling.py`, `gitlab.py` |
 | `review-polling-run` | `polling.py`, `passlog.py`, `lock.py`, `cli.py` |
 | `review-publishing` | `publishing.py`, `file_links.py`, `gitlab.py`, `polling.py` |

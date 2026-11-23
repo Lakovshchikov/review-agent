@@ -1536,3 +1536,242 @@ def test_project_template_reaches_the_engine(setup):
 
     by_project = {r["config"].prompt.template: r for r in recorder.reviews}
     assert set(by_project) == {None, paths["other"]}
+
+
+# -- a further review round (--again) -----------------------------------------------
+
+OLD_HEAD = "1" * 40
+NEW_HEAD = "2" * 40
+
+
+def _old_report(head=OLD_HEAD, text="OLD REPORT TEXT"):
+    return {
+        "body": f"### 🤖 AI code review\n\n{text}\n\n{build_marker(head)}\n",
+        "author": {"username": "ai-reviewer"},
+        "created_at": _iso(NOW - timedelta(days=2)),
+    }
+
+
+def _human(text, user="ivanov", system=False):
+    return {
+        "body": text,
+        "author": {"username": user},
+        "created_at": _iso(NOW - timedelta(hours=3)),
+        "system": system,
+    }
+
+
+def _again_gitlab():
+    return FakeGitLab(
+        {
+            # reviewed, nothing changed since
+            ("b2c/front", 1): _mr("same", head=OLD_HEAD, notes=[_old_report()]),
+            # reviewed, new commit and replies
+            ("b2c/front", 2): _mr(
+                "moved",
+                head=NEW_HEAD,
+                notes=[
+                    _old_report(),
+                    _human("fixed it in the second commit"),
+                    _human("added 1 commit", user="system-bot", system=True),
+                    _human("not sure about item 2", user="petrov"),
+                ],
+            ),
+            # never reviewed
+            ("b2c/front", 3): _mr("fresh", head="3" * 40),
+        }
+    )
+
+
+def test_again_with_all_is_refused_before_anything_happens(setup):
+    gitlab = _again_gitlab()
+    recorder = Recorder()
+    errors = []
+    code = _poll(setup, gitlab, recorder, review_all=True, again=True, error_fn=errors.append)
+
+    assert code == EXIT_NOT_STARTED
+    assert recorder.reviews == [] and gitlab.calls == [] and gitlab.reviewer_calls == []
+    text = "\n".join(errors) + _pass_logs(setup)[0].read_text(encoding="utf-8")
+    assert "--again" in text and "--all" in text
+
+
+def test_again_without_terminal_says_it_is_interactive_only(setup):
+    gitlab = _again_gitlab()
+    errors = []
+    code = _poll(setup, gitlab, Recorder(), again=True, tty=False, error_fn=errors.append)
+    assert code == EXIT_NOT_STARTED
+    assert "только интерактивное" in "\n".join(errors)
+    assert gitlab.reviewer_calls == []
+
+
+def test_again_lists_only_reviewed_mrs_with_marks(setup):
+    gitlab = _again_gitlab()
+    output = []
+    assert _poll(setup, gitlab, Recorder(), again=True, answers=["q"], output=output) == EXIT_OK
+
+    text = "\n".join(output)
+    assert "b2c/front !1  [без изменений]" in text
+    assert "b2c/front !2  [новые коммиты] [есть ответы]" in text
+    assert "!3" not in text  # never reviewed: not offered
+    assert gitlab.calls == []
+
+
+def test_again_does_not_count_a_foreign_marker_or_only_system_notes(setup):
+    gitlab = FakeGitLab(
+        {
+            ("b2c/front", 1): _mr(
+                "foreign",
+                head=OLD_HEAD,
+                notes=[{"body": build_marker(OLD_HEAD), "author": {"username": "someone"}}],
+            ),
+            ("b2c/front", 2): _mr(
+                "only-system",
+                head=OLD_HEAD,
+                notes=[_old_report(), _human("added 1 commit", system=True)],
+            ),
+        }
+    )
+    output = []
+    _poll(setup, gitlab, Recorder(), again=True, answers=["q"], output=output)
+    text = "\n".join(output)
+    assert "!1" not in text
+    assert "b2c/front !2  [без изменений]" in text
+
+
+def test_again_nothing_to_re_review_exits_zero_without_prompting(setup):
+    gitlab = FakeGitLab({("b2c/front", 1): _mr("fresh")})
+    output = []
+    assert _poll(setup, gitlab, Recorder(), again=True, output=output) == EXIT_OK
+    assert any("можно отревьюить повторно" in line for line in output)
+    assert not any("Выберите номер" in line for line in output)
+
+
+def test_again_publishes_a_new_comment_and_keeps_the_old_report(setup):
+    gitlab = _again_gitlab()
+    recorder = Recorder()
+
+    assert _poll(setup, gitlab, recorder, again=True, answers=["2"]) == EXIT_OK
+
+    # Only the chosen MR was reviewed, and with the previous round's context.
+    assert len(recorder.reviews) == 1
+    review = recorder.reviews[0]
+    assert review["head_sha"] == NEW_HEAD
+    rereview = review["rereview"]
+    assert "OLD REPORT TEXT" in rereview.previous_report
+    assert rereview.previous_sha == OLD_HEAD
+    assert [(r.author, r.body) for r in rereview.replies] == [
+        ("ivanov", "fixed it in the second commit"),
+        ("petrov", "not sure about item 2"),
+    ]  # the system note is not a reply
+
+    reports = [n for n in gitlab.mrs[("b2c/front", 2)]["notes"] if "ai-review: sha=" in n["body"]]
+    assert len(reports) == 2
+    assert "OLD REPORT TEXT" in reports[0]["body"] and build_marker(OLD_HEAD) in reports[0]["body"]
+    new = reports[1]["body"]
+    assert "повторное ревью (раунд 2)" in new and build_marker(NEW_HEAD) in new
+    assert OLD_HEAD[:12] in new and GOOD_REPORT.strip() in new
+    assert "ai-review-claim" not in new
+    # claim -> the same comment turned into the report
+    assert [c[0] for c in gitlab.calls] == ["post", "update"]
+
+
+def test_again_on_an_unchanged_mr_is_allowed_and_repeats_the_marker(setup):
+    gitlab = _again_gitlab()
+    recorder = Recorder()
+    assert _poll(setup, gitlab, recorder, again=True, answers=["1"]) == EXIT_OK
+
+    assert recorder.reviews[0]["head_sha"] == OLD_HEAD
+    assert recorder.reviews[0]["rereview"].replies == []
+    marker_notes = [n for n in gitlab.mrs[("b2c/front", 1)]["notes"] if build_marker(OLD_HEAD) in n["body"]]
+    assert len(marker_notes) == 2
+
+
+def test_again_third_round_is_numbered_three(setup):
+    gitlab = FakeGitLab(
+        {
+            ("b2c/front", 1): _mr(
+                "x",
+                head=NEW_HEAD,
+                notes=[_old_report(OLD_HEAD, "FIRST"), _old_report("5" * 40, "SECOND"), _human("hm")],
+            )
+        }
+    )
+    recorder = Recorder()
+    assert _poll(setup, gitlab, recorder, again=True, answers=["1"]) == EXIT_OK
+    assert "SECOND" in recorder.reviews[0]["rereview"].previous_report
+    assert recorder.reviews[0]["rereview"].previous_sha == "5" * 40
+    assert "раунд 3" in gitlab.published[-1][2]
+
+
+def test_again_dry_run_writes_nothing_to_gitlab(setup):
+    gitlab = _again_gitlab()
+    assert _poll(setup, gitlab, Recorder(), again=True, dry_run=True, answers=["2"]) == EXIT_OK
+    assert gitlab.calls == []
+    comments = list((setup["work"] / "dry-run").glob("*.comment.md"))
+    assert len(comments) == 1
+    assert "повторное ревью (раунд 2)" in comments[0].read_text(encoding="utf-8")
+
+
+def test_again_failed_round_removes_its_claim_and_keeps_the_old_report(setup):
+    gitlab = _again_gitlab()
+    recorder = Recorder(fail_for={NEW_HEAD})
+    assert _poll(setup, gitlab, recorder, again=True, answers=["2"]) == EXIT_FAILURES
+    notes = gitlab.mrs[("b2c/front", 2)]["notes"]
+    assert [c[0] for c in gitlab.calls] == ["post", "delete"]
+    assert not any("ai-review-claim" in n["body"] for n in notes)
+    assert sum("ai-review: sha=" in n["body"] for n in notes) == 1  # still only the old report
+
+
+def test_again_discards_its_report_when_another_round_was_published_meanwhile(setup):
+    gitlab = _again_gitlab()
+    recorder = Recorder()
+
+    def other_pass_publishes(kwargs):
+        gitlab.mrs[("b2c/front", 2)]["notes"].append(
+            {
+                "id": 9999,
+                "body": f"ANOTHER ROUND\n{build_marker(NEW_HEAD)}",
+                "author": {"username": "ai-reviewer"},
+                "created_at": _iso(NOW),
+            }
+        )
+
+    recorder.during_review = other_pass_publishes
+    assert _poll(setup, gitlab, recorder, again=True, answers=["2"]) == EXIT_OK
+
+    notes = gitlab.mrs[("b2c/front", 2)]["notes"]
+    assert sum("ai-review: sha=" in n["body"] for n in notes) == 2  # old + the other pass's
+    assert not any("ai-review-claim" in n["body"] for n in notes)
+    assert [c[0] for c in gitlab.calls] == ["post", "delete"]
+
+
+def test_again_a_live_claim_of_another_pass_blocks_the_mr(setup):
+    gitlab = FakeGitLab(
+        {("b2c/front", 1): _mr("busy", head=NEW_HEAD, notes=[_old_report(), _claim()])}
+    )
+    output = []
+    recorder = Recorder()
+    assert _poll(setup, gitlab, recorder, again=True, output=output) == EXIT_OK
+    assert recorder.reviews == []
+    assert any("уже выполняется" in line for line in output)
+
+
+def test_ordinary_pass_still_skips_a_reviewed_mr_whatever_it_got_since(setup):
+    gitlab = _again_gitlab()
+    recorder = Recorder()
+    assert _poll(setup, gitlab, recorder, review_all=True) == EXIT_OK
+    # Only the never-reviewed MR was reviewed - and as a first review.
+    assert [r["head_sha"] for r in recorder.reviews] == ["3" * 40]
+    assert "rereview" not in recorder.reviews[0]
+    assert "повторное" not in gitlab.published[-1][2]
+
+
+def test_broken_rereview_template_stops_even_an_ordinary_pass(setup, tmp_path):
+    broken = tmp_path / "re.md.j2"
+    broken.write_text("{{ nope }}", encoding="utf-8")
+    _edit_config(setup, lambda cfg: cfg["gitlab"]["projects"][0].update(prompt={"rereview_template": str(broken)}))
+    gitlab = _again_gitlab()
+    errors = []
+    assert _poll(setup, gitlab, Recorder(), review_all=True, error_fn=errors.append) == EXIT_NOT_STARTED
+    assert "неизвестная переменная: nope" in "\n".join(errors)
+    assert gitlab.reviewer_calls == []

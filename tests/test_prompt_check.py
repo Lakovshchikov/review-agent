@@ -187,3 +187,68 @@ def test_preview_follows_the_candidate_lists():
     first, second = (r.preview for r in result.reports)
     assert "README.md" in first and "Документация проекта" not in first
     assert "AGENTS.md" in second and "Документация проекта" in second
+
+
+# -- the template of a further review round (poll --again) -------------------------
+
+from review_agent.prompt import BUILTIN_REREVIEW_TEMPLATE, REREVIEW_VARIABLES  # noqa: E402
+
+_RE_FULL = _FULL + (
+    "{{ previous_report }} {{ previous_sha }} {{ head_sha }}\n"
+    "{% for r in replies %}{{ r.author }} {{ r.created_at }} {{ r.body }}{% endfor %}\n"
+)
+
+
+def test_builtin_rereview_template_is_clean():
+    assert check_template(None, rereview=True)[0] == []
+    assert check_template(BUILTIN_REREVIEW_TEMPLATE, rereview=True)[0] == []
+
+
+def test_rereview_template_may_use_the_extra_variables(tmp_path):
+    assert check_template(_write(tmp_path, "re.md.j2", _RE_FULL), rereview=True)[0] == []
+
+
+def test_first_review_template_rejects_rereview_variables(tmp_path):
+    errors = _messages(check_template(_write(tmp_path, "t.md.j2", _FULL + "{{ previous_report }}"))[0], ERROR)
+    assert errors == ["неизвестная переменная: previous_report"]
+
+
+def test_rereview_template_unused_extra_variables_are_warned(tmp_path):
+    text = _RE_FULL.replace("{{ previous_report }}", "")
+    warnings = _messages(check_template(_write(tmp_path, "re.md.j2", text), rereview=True)[0], WARNING)
+    assert any("previous_report" in w for w in warnings) and len(warnings) == 1
+
+
+def test_replies_truncated_is_not_required(tmp_path):
+    # A flag, not text: leaving it out is legitimate.
+    assert "replies_truncated" in REREVIEW_VARIABLES
+    assert check_template(_write(tmp_path, "re.md.j2", _RE_FULL), rereview=True)[0] == []
+
+
+def test_missing_rereview_template_file_is_an_error(tmp_path):
+    issues, _ = check_template(str(tmp_path / "absent.md.j2"), rereview=True)
+    assert _messages(issues, ERROR) and "не найден" in _messages(issues, ERROR)[0]
+
+
+def test_check_settings_checks_both_templates_when_asked(tmp_path):
+    broken = _write(tmp_path, "re.md.j2", "{{ nope }}")
+    prompt = PromptSettings(rereview_template=broken)
+    plain = check_settings([("a/b", prompt, [])])
+    assert len(plain.reports) == 1 and plain.exit_code == EXIT_CLEAN
+    both = check_settings([("a/b", prompt, [])], rereview=True)
+    assert [r.rereview for r in both.reports] == [False, True]
+    assert both.exit_code == EXIT_ERRORS
+    text = both.format()
+    assert "re.md.j2 [повторное ревью]" in text and "builtin/default.md.j2" in text
+
+
+def test_same_rereview_settings_checked_once_for_several_users():
+    result = check_settings([("g", PromptSettings(), []), ("a/b", PromptSettings(), [])], rereview=True)
+    assert [(r.rereview, r.users) for r in result.reports] == [(False, ["g", "a/b"]), (True, ["g", "a/b"])]
+
+
+def test_rereview_preview_shows_a_readable_round():
+    result = check_settings([("g", PromptSettings(), [])], want_preview=True, rereview=True)
+    preview = result.reports[1].preview
+    assert "(текст предыдущего отчёта бота)" in preview and "developer" in preview
+    assert "RACHECK" not in preview

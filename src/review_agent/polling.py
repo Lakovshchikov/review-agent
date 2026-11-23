@@ -9,7 +9,11 @@ cron/CI later) is not this module's concern.
 Modes:
 - interactive (default, for the testing period): list the MRs found,
   each with a link, and review only the one the user picks;
-- automatic (`--all`): review every MR found, one after another.
+- automatic (`--all`): review every MR found, one after another;
+- further round (`--again`, interactive only): the MRs that already carry
+  a report of ours are the candidates, the user picks one, the agent gets
+  its previous report and the replies after it, and the result is a NEW
+  comment (the earlier reports stay).
 
 Protection against reviewing one MR twice, in layers:
 - `<work_dir>/poll.lock`: one run at a time per working directory;
@@ -61,17 +65,23 @@ from review_agent.lock import LOCK_FILE_NAME, PollLockBusy, pid_alive, poll_lock
 from review_agent.passlog import PassLog, pass_log
 from review_agent.prompt_check import check_settings, may_proceed, project_targets
 from review_agent.proc import no_window_flags
-from review_agent.pipeline import ReviewResult, run_review
+from review_agent.pipeline import RereviewInput, ReviewResult, run_review
 from review_agent.usage_ledger import QuotaPrompt, RunLabels, UsageRecorder, make_recorder
 from review_agent.worktree import list_tree_paths
 from review_agent.quota_prompt import make_quota_prompt
 from review_agent.repo_source import RepoSources, expire_repos, managed_copies, slug
 from review_agent.publishing import (
+    Report,
+    Reply,
     format_claim_comment,
     format_comment,
     is_already_reviewed,
     is_report_usable,
+    latest_report,
     live_claims,
+    newer_report_exists,
+    replies_after,
+    round_number,
     stale_claims,
 )
 
@@ -142,12 +152,19 @@ class Outcome:
         return line + "".join(f"\n    {d}" for d in details)
 
 
+MARK_NEW_COMMITS = "новые коммиты"
+MARK_REPLIES = "есть ответы"
+MARK_UNCHANGED = "без изменений"
+
+
 @dataclasses.dataclass
 class _Pending:
     project: GitLabProjectConfig
     settings: ProjectSettings
     candidate: MRCandidate
     metadata: MRMetadata
+    # `--again` only: what changed since our latest report, for the list.
+    marks: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -171,6 +188,9 @@ class _PassContext:
     # Files and directories of a commit, for linking the report's file
     # references (worktree.list_tree_paths; stubbed in tests).
     tree_paths_fn: Callable[[Path, str], set[str]] = list_tree_paths
+    # A further review round (`--again`): MRs WITH a report of ours are the
+    # candidates, and the review gets that report and the replies after it.
+    again: bool = False
 
 
 # -- the pass ----------------------------------------------------------------
@@ -198,13 +218,18 @@ def _select(
     *,
     input_fn: Callable[[str], str],
     log: PassLog,
+    again: bool = False,
 ) -> list[_Pending]:
-    log.info(f"\nНайдено MR, где ревьюер назначен: {len(pending)}\n")
+    if again:
+        log.info(f"\nНайдено уже отревьюенных MR для повторного ревью: {len(pending)}\n")
+    else:
+        log.info(f"\nНайдено MR, где ревьюер назначен: {len(pending)}\n")
     for number, item in enumerate(pending, start=1):
         meta = item.metadata
         state = "" if meta.state == "opened" else f"[{meta.state}] "
+        marks = "".join(f"[{mark}] " for mark in item.marks)
         log.info(
-            f"  {number}) {item.project.path} !{meta.iid}  {state}{meta.title}  (автор: {meta.author})"
+            f"  {number}) {item.project.path} !{meta.iid}  {marks}{state}{meta.title}  (автор: {meta.author})"
         )
         log.info(f"     {meta.web_url}")
     log.info("")
@@ -223,8 +248,15 @@ def _select(
 
 
 def _in_progress_reason(notes: list[dict[str, Any]], ctx: _PassContext) -> str:
-    """Why an MR must not be taken now ("" if it may be): reviewed or claimed."""
-    if is_already_reviewed(notes, ctx.bot_username):
+    """Why an MR must not be taken now ("" if it may be): reviewed or claimed.
+
+    A further round (`--again`) turns the first test around: it needs a
+    report of ours to build on, and only a live claim stops it.
+    """
+    if ctx.again:
+        if latest_report(notes, ctx.bot_username) is None:
+            return "ещё не отревьюен: повторное ревью возможно только после первого"
+    elif is_already_reviewed(notes, ctx.bot_username):
         return "уже отревьюен (есть маркер)"
     claims = live_claims(notes, ctx.bot_username, now=ctx.now_fn(), ttl=ctx.claim_ttl)
     if claims:
@@ -232,6 +264,18 @@ def _in_progress_reason(notes: list[dict[str, Any]], ctx: _PassContext) -> str:
         when = started.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if started else "?"
         return f"ревью уже выполняется другим проходом (claim от {when})"
     return ""
+
+
+def _again_marks(
+    notes: list[dict[str, Any]], report: Report, head_sha: str, ctx: _PassContext
+) -> list[str]:
+    """Why a reviewed MR may deserve another round, from GitLab data only."""
+    marks: list[str] = []
+    if head_sha != report.head_sha:
+        marks.append(MARK_NEW_COMMITS)
+    if replies_after(notes, ctx.bot_username, report):
+        marks.append(MARK_REPLIES)
+    return marks or [MARK_UNCHANGED]
 
 
 def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
@@ -259,6 +303,17 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
             outcome.status = "skipped"
             outcome.reason = reason
             return outcome
+
+        # A further round builds on our latest report and what was said
+        # after it - read now, before our own claim lands among the notes.
+        base_report: Report | None = None
+        replies: list[Reply] = []
+        round_no = 1
+        if ctx.again:
+            base_report = latest_report(notes, ctx.bot_username)
+            assert base_report is not None  # _in_progress_reason guarantees it
+            replies = replies_after(notes, ctx.bot_username, base_report)
+            round_no = round_number(notes, ctx.bot_username)
 
         if not ctx.dry_run:
             # 2. Claims of a pass that died are removed, not left forever.
@@ -313,8 +368,18 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
                 provider = item.settings.config.provider.name
                 usage_kwargs = dict(
                     usage=ctx.usage,
-                    labels=RunLabels(source="poll", project=project.path, mr_iid=meta.iid),
+                    labels=RunLabels(
+                        source="poll-again" if ctx.again else "poll",
+                        project=project.path,
+                        mr_iid=meta.iid,
+                    ),
                     quota_prompt=ctx.quota_factory(provider) if ctx.quota_factory else None,
+                )
+            if base_report is not None:
+                usage_kwargs["rereview"] = RereviewInput(
+                    previous_report=base_report.body,
+                    previous_sha=base_report.head_sha,
+                    replies=replies,
                 )
             result = ctx.review_fn(
                 repo_path=prepared.path,
@@ -343,12 +408,22 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
             head_sha=refs.head_sha,
             base_sha=refs.base_sha,
             model=build_model_string(item.settings.config.provider),
+            round=round_no,
+            previous_sha=base_report.head_sha if base_report is not None else None,
         )
 
-        # 6. Someone may have published while we were reviewing.
-        if is_already_reviewed(client.list_notes(project.path, meta.iid), ctx.bot_username):
+        # 6. Someone may have published while we were reviewing: any marker
+        #    for a first review, a report newer than ours for a further round.
+        latest_notes = client.list_notes(project.path, meta.iid)
+        if base_report is not None:
+            raced = newer_report_exists(latest_notes, ctx.bot_username, base_report.note_id)
+            raced_reason = "отчёт другого раунда появился во время прогона — отчёт не опубликован"
+        else:
+            raced = is_already_reviewed(latest_notes, ctx.bot_username)
+            raced_reason = "маркер ревью появился во время прогона — отчёт не опубликован"
+        if raced:
             outcome.status = "skipped"
-            outcome.reason = "маркер ревью появился во время прогона — отчёт не опубликован"
+            outcome.reason = raced_reason
             return outcome
 
         if ctx.dry_run:
@@ -369,7 +444,11 @@ def _review_one(item: _Pending, ctx: _PassContext) -> Outcome:
             client.post_note(project.path, meta.iid, body, body_file=mr_tmp / "report.json")
         my_claim = None  # the claim has become the report
         outcome.status = "published"
-        outcome.reason = f"отревьюен коммит {refs.head_sha[:12]}"
+        outcome.reason = (
+            f"повторное ревью (раунд {round_no}): отревьюен коммит {refs.head_sha[:12]}"
+            if ctx.again
+            else f"отревьюен коммит {refs.head_sha[:12]}"
+        )
         return outcome
     except Exception as exc:  # noqa: BLE001 - per-MR isolation is the point
         outcome.status = "failed"
@@ -462,6 +541,7 @@ def run_poll(
     *,
     config_path: Path,
     review_all: bool = False,
+    again: bool = False,
     dry_run: bool = False,
     include_closed: bool = False,
     debug: bool = False,
@@ -503,6 +583,7 @@ def run_poll(
             name
             for name, on in (
                 ("--all", review_all),
+                ("--again", again),
                 ("--dry-run", dry_run),
                 ("--include-closed", include_closed),
                 ("--debug", debug),
@@ -518,17 +599,30 @@ def run_poll(
                 log.error(f"В конфиге '{config_path}' нет секции 'gitlab' — она обязательна для poll.")
                 return EXIT_NOT_STARTED
 
-            if not review_all and not stdin_isatty():
+            if again and review_all:
                 log.error(
-                    "Интерактивный режим требует терминала, а stdin не интерактивный. "
-                    "Для запуска без вопросов (планировщик, CI) используйте --all."
+                    "--again и --all несовместимы: повторное ревью запускается только "
+                    "вручную и только по одному MR. Уберите --all."
                 )
+                return EXIT_NOT_STARTED
+
+            if not review_all and not stdin_isatty():
+                if again:
+                    log.error(
+                        "Повторное ревью (--again) только интерактивное: нужен терминал, "
+                        "а stdin не интерактивный. В расписании и CI оно не запускается."
+                    )
+                else:
+                    log.error(
+                        "Интерактивный режим требует терминала, а stdin не интерактивный. "
+                        "Для запуска без вопросов (планировщик, CI) используйте --all."
+                    )
                 return EXIT_NOT_STARTED
 
             # Prompt templates of every project this pass may review, before
             # the lock, GitLab and any claim: a refusal leaves nothing behind.
             enabled = [p for p in config.gitlab.projects if p.enabled]
-            check = check_settings(project_targets(config, enabled))
+            check = check_settings(project_targets(config, enabled), rereview=True)
             if not may_proceed(
                 check,
                 ask=None if review_all else input_fn,
@@ -554,6 +648,7 @@ def run_poll(
                         repo_sources=repo_sources_factory(config, work_dir, log),
                         now_fn=now_fn,
                         tree_paths_fn=tree_paths_fn,
+                        again=again,
                         usage=make_recorder(config, warn=log.warning, note=log.file_only),
                         quota_factory=(
                             None
@@ -685,7 +780,21 @@ def _run_locked(
             continue
         for candidate in candidates:
             try:
-                reason = _in_progress_reason(client.list_notes(project.path, candidate.iid), ctx)
+                notes = client.list_notes(project.path, candidate.iid)
+                marks: list[str] = []
+                if ctx.again:
+                    report = latest_report(notes, bot_username)
+                    if report is None:
+                        # Never reviewed: nothing to build a further round on.
+                        log.file_only(
+                            f"{project.path} !{candidate.iid}: нет отчёта бота — "
+                            "в повторном ревью не предлагается"
+                        )
+                        continue
+                    marks = _again_marks(
+                        notes, report, client.get_diff_refs(project.path, candidate.iid).head_sha, ctx
+                    )
+                reason = _in_progress_reason(notes, ctx)
                 if reason:
                     outcomes.append(Outcome(project.path, candidate.iid, "skipped", reason))
                     continue
@@ -694,16 +803,25 @@ def _run_locked(
                 outcomes.append(Outcome(project.path, candidate.iid, "failed", str(exc)))
                 continue
             pending.append(
-                _Pending(project=project, settings=settings, candidate=candidate, metadata=metadata)
+                _Pending(
+                    project=project,
+                    settings=settings,
+                    candidate=candidate,
+                    metadata=metadata,
+                    marks=marks,
+                )
             )
 
     if not pending:
-        log.info("Нет MR, ожидающих ревью.")
+        if ctx.again:
+            log.info("Нет MR, которые можно отревьюить повторно (ни на одном нет отчёта бота).")
+        else:
+            log.info("Нет MR, ожидающих ревью.")
         selected: list[_Pending] = []
     elif review_all:
         selected = pending
     else:
-        selected = _select(pending, input_fn=input_fn, log=log)
+        selected = _select(pending, input_fn=input_fn, log=log, again=ctx.again)
 
     for item in selected:  # strictly one after another - no parallelism
         log.info(f"Ревью {item.project.path} !{item.metadata.iid}: {item.metadata.web_url} ...")

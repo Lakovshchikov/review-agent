@@ -101,6 +101,16 @@ def build_poll_arg_parser() -> argparse.ArgumentParser:
         help="Automatic mode: review every MR found, one after another, without prompting.",
     )
     parser.add_argument(
+        "--again",
+        action="store_true",
+        help=(
+            "Further review round (interactive only, not with --all): list MRs that "
+            "already carry a report of this tool, and review the one you pick again, "
+            "giving the agent its previous report and the replies after it. The "
+            "result is published as a new comment."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Do everything except writing to GitLab: reports and would-be comments stay local.",
@@ -131,6 +141,7 @@ def poll_main(argv: list[str]) -> int:
     return run_poll(
         config_path=resolve_config_path(args.config),
         review_all=args.review_all,
+        again=args.again,
         dry_run=args.dry_run,
         include_closed=args.include_closed,
         debug=args.debug,
@@ -241,11 +252,11 @@ def prompt_check_main(argv: list[str]) -> int:
                 enabled = next(p.enabled for p in config.gitlab.projects if p.path == path)
                 targets.append((path if enabled else f"{path} (выключен)", prompt, skills))
 
-    result = check_settings(targets, want_preview=args.show)
+    result = check_settings(targets, want_preview=args.show, rereview=args.template is None)
     _print_safe(result.format())
     if args.show:
         for report in result.reports:
-            _print_safe(f"\n----- {report.label} ({', '.join(report.users)}) -----")
+            _print_safe(f"\n----- {report.title} ({', '.join(report.users)}) -----")
             _print_safe(report.preview if report.preview is not None else "(не отрендерен: есть ошибки)")
     return result.exit_code
 

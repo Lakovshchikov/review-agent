@@ -73,6 +73,19 @@ def ensure_commits_available(repo_path: Path, *shas: str) -> None:
             )
 
 
+def commit_available(repo_path: Path, sha: str) -> bool:
+    """Whether commit `sha` is in the repository, trying one `git fetch origin <sha>` if it is not.
+
+    Never raises. Used for the previous report's commit of a further
+    review round: after a force-push the server may no longer have it, and
+    that must degrade the prompt, not fail the review.
+    """
+    if _commit_exists(repo_path, sha):
+        return True
+    result = run_git(repo_path, "fetch", "origin", sha, extra_env=NETWORK_ENV)
+    return result.returncode == 0 and _commit_exists(repo_path, sha)
+
+
 def fetch_refspecs(repo_path: Path, remote: str, refspecs: list[str]) -> list[str]:
     """`git fetch <remote> <refspec>...` in one call; returns warnings, never raises.
 

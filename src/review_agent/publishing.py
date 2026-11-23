@@ -50,14 +50,103 @@ def reviewed_shas(notes: Iterable[dict[str, Any]], bot_username: str) -> list[st
 
 
 def is_already_reviewed(notes: Iterable[dict[str, Any]], bot_username: str) -> bool:
-    """Skip rule for this change: ANY of our markers means "reviewed", whatever its SHA.
+    """Skip rule of an ordinary pass: ANY of our markers means "reviewed", whatever its SHA.
 
-    Re-reviewing a new head after the developer pushes more commits is a
-    backlog feature; enabling it only means changing this predicate to
-    compare against the current head SHA - the marker format and storage
-    stay the same.
+    A further round is started only by hand (`poll --again`), which works
+    from latest_report() instead; the marker format and storage are the same.
     """
     return bool(reviewed_shas(notes, bot_username))
+
+
+@dataclasses.dataclass(frozen=True)
+class Report:
+    """A published review report of ours: the comment that carries a marker."""
+
+    note_id: int
+    head_sha: str  # commit recorded in its (last) marker
+    body: str
+    created_at: str
+
+
+@dataclasses.dataclass(frozen=True)
+class Reply:
+    """A comment by someone other than us, posted after a report."""
+
+    author: str
+    created_at: str
+    body: str
+
+
+def _bot_reports(notes: Iterable[dict[str, Any]], bot_username: str) -> list[Report]:
+    """Our marker-bearing comments, oldest first (by note id: GitLab's own order)."""
+    found: list[Report] = []
+    for note in notes:
+        if (note.get("author") or {}).get("username") != bot_username:
+            continue
+        body = note.get("body", "") or ""
+        shas = find_marker_shas(body)
+        if not shas or note.get("id") is None:
+            continue
+        found.append(
+            Report(
+                note_id=int(note["id"]),
+                head_sha=shas[-1],
+                body=body,
+                created_at=str(note.get("created_at") or ""),
+            )
+        )
+    return sorted(found, key=lambda r: r.note_id)
+
+
+def latest_report(notes: Iterable[dict[str, Any]], bot_username: str) -> Report | None:
+    """The previous report of a re-review: our latest marker-bearing comment.
+
+    Markers in anyone else's comments are ignored, and a claim comment has
+    no review marker, so neither can be mistaken for a report.
+    """
+    reports = _bot_reports(notes, bot_username)
+    return reports[-1] if reports else None
+
+
+def replies_after(
+    notes: Iterable[dict[str, Any]], bot_username: str, report: Report
+) -> list[Reply]:
+    """Comments by users other than us after `report`, oldest first.
+
+    GitLab's own system notes ("added 1 commit") are left out: the agent
+    reads the commits itself.
+    """
+    found: list[tuple[int, Reply]] = []
+    for note in notes:
+        note_id = note.get("id")
+        if note_id is None or int(note_id) <= report.note_id or note.get("system"):
+            continue
+        author = (note.get("author") or {}).get("username") or ""
+        if author == bot_username:
+            continue
+        found.append(
+            (
+                int(note_id),
+                Reply(
+                    author=author or "?",
+                    created_at=str(note.get("created_at") or ""),
+                    body=note.get("body", "") or "",
+                ),
+            )
+        )
+    return [reply for _, reply in sorted(found, key=lambda item: item[0])]
+
+
+def newer_report_exists(
+    notes: Iterable[dict[str, Any]], bot_username: str, after_note_id: int
+) -> bool:
+    """Whether a report of ours newer than note `after_note_id` exists (a round published meanwhile)."""
+    return any(r.note_id > after_note_id for r in _bot_reports(notes, bot_username))
+
+
+def round_number(notes: Iterable[dict[str, Any]], bot_username: str) -> int:
+    """The number of the round a new report would be: our reports so far + 1."""
+    return len(_bot_reports(notes, bot_username)) + 1
 
 
 _CLAIM_RE = re.compile(r"<!-- ai-review-claim: sha=([0-9a-f]{7,64}) started=(\S+) -->")
@@ -147,13 +236,36 @@ def is_report_usable(report: str, min_chars: int) -> bool:
     return bool(stripped) and len(stripped) >= min_chars
 
 
-def format_comment(*, report: str, head_sha: str, base_sha: str, model: str) -> str:
-    """Comment body: header naming the reviewed commit, the report as-is, marker last."""
+def format_comment(
+    *,
+    report: str,
+    head_sha: str,
+    base_sha: str,
+    model: str,
+    round: int = 1,
+    previous_sha: str | None = None,
+) -> str:
+    """Comment body: header naming the reviewed commit, the report as-is, marker last.
+
+    Round 1 is the first review and its header is the same as ever; later
+    rounds say so and name the commit the previous report was about.
+    """
+    if round <= 1:
+        title = "### 🤖 AI code review\n\n"
+        previous = ""
+    else:
+        title = f"### 🤖 AI code review — повторное ревью (раунд {round})\n\n"
+        previous = (
+            f"Предыдущий отчёт был по коммиту `{previous_sha[:12]}`.\n"
+            if previous_sha
+            else ""
+        )
     header = (
-        "### 🤖 AI code review\n\n"
-        f"Автоматический отчёт по коммиту `{head_sha[:12]}` "
+        title
+        + f"Автоматический отчёт по коммиту `{head_sha[:12]}` "
         f"(base `{base_sha[:12]}`), модель `{model}`.\n"
-        "Находки могут быть неполными или ошибочными — это подсказка ревьюеру, "
+        + previous
+        + "Находки могут быть неполными или ошибочными — это подсказка ревьюеру, "
         "не вердикт.\n\n"
         "---\n\n"
     )

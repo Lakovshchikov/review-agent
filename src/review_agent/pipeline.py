@@ -22,12 +22,30 @@ from review_agent.harness import HarnessError, invoke_harness
 from review_agent.harness_config import write_opencode_agent_config, write_safety_note
 from review_agent.housekeeping import WorkDir, copy_artifacts, remove_path
 from review_agent.prompt import (
+    RereviewContext,
     discover_docs_path,
     discover_repo_instructions_path,
+    limit_replies,
+    render_rereview_prompt,
     render_review_prompt,
 )
 from review_agent.usage_ledger import QuotaPrompt, QuotaReading, RunLabels, UsageRecorder
-from review_agent.worktree import managed_worktree
+from review_agent.worktree import commit_available, managed_worktree
+
+
+@dataclasses.dataclass(frozen=True)
+class RereviewInput:
+    """What the orchestrator knows about the earlier round of an MR (from its GitLab comments).
+
+    `replies` are everything said after the previous report, oldest first
+    (objects with author, created_at, body); the engine cuts them to the
+    configured size. `previous_sha` is the commit of the previous report's
+    marker; the engine drops it if that commit cannot be found.
+    """
+
+    previous_report: str
+    previous_sha: str | None
+    replies: list = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -54,8 +72,13 @@ def run_review(
     usage: UsageRecorder | None = None,
     labels: RunLabels | None = None,
     quota_prompt: QuotaPrompt | None = None,
+    rereview: RereviewInput | None = None,
 ) -> ReviewResult:
     """Run one full review and return the report and harness stderr.
+
+    With `rereview` this is a further round of an already reviewed MR: the
+    prompt comes from the re-review template and carries the previous
+    report and the replies after it (see RereviewInput).
 
     `config` overrides reading `config_path` - `poll` passes the
     project's effective config (its own provider/skills). With
@@ -74,6 +97,24 @@ def run_review(
         config = load_config(config_path)
     tmp_dir = WorkDir.from_config(config).tmp
 
+    # Before the worktree: an unreachable previous commit (force-push) is a
+    # normal case that only changes the prompt, never fails the review.
+    rereview_context: RereviewContext | None = None
+    if rereview is not None:
+        previous_sha = rereview.previous_sha
+        if previous_sha and not commit_available(repo_path, previous_sha):
+            previous_sha = None
+        replies, truncated = limit_replies(
+            list(rereview.replies), config.prompt.rereview_max_reply_chars
+        )
+        rereview_context = RereviewContext(
+            previous_report=rereview.previous_report,
+            previous_sha=previous_sha,
+            head_sha=head_sha,
+            replies=replies,
+            replies_truncated=truncated,
+        )
+
     run_dir: Path | None = None
     try:
         with managed_worktree(repo_path, base_sha, head_sha, tmp_dir) as handle:
@@ -86,16 +127,29 @@ def run_review(
             docs_path = discover_docs_path(handle.path, prompt_settings.docs_dirs)
             skill_paths = [Path(p) for p in config.skills]
 
-            prompt_text = render_review_prompt(
-                worktree_path=handle.path,
-                base_sha=base_sha,
-                mr_title=mr_title,
-                mr_description=mr_description,
-                repo_instructions_path=repo_instructions_path,
-                docs_path=docs_path,
-                skill_paths=skill_paths,
-                template=prompt_settings.template,
-            )
+            if rereview_context is None:
+                prompt_text = render_review_prompt(
+                    worktree_path=handle.path,
+                    base_sha=base_sha,
+                    mr_title=mr_title,
+                    mr_description=mr_description,
+                    repo_instructions_path=repo_instructions_path,
+                    docs_path=docs_path,
+                    skill_paths=skill_paths,
+                    template=prompt_settings.template,
+                )
+            else:
+                prompt_text = render_rereview_prompt(
+                    worktree_path=handle.path,
+                    base_sha=base_sha,
+                    mr_title=mr_title,
+                    mr_description=mr_description,
+                    repo_instructions_path=repo_instructions_path,
+                    docs_path=docs_path,
+                    skill_paths=skill_paths,
+                    rereview=rereview_context,
+                    template=prompt_settings.rereview_template,
+                )
             prompt_file = run_dir / "prompt.md"
             prompt_file.write_text(prompt_text, encoding="utf-8")
 
@@ -150,7 +204,12 @@ def run_review(
                         head_sha=head_sha,
                         provider=config.provider,
                         skills=config.skills,
-                        prompt_template=prompt_settings.template,
+                        prompt_template=(
+                            prompt_settings.template
+                            if rereview_context is None
+                            else prompt_settings.rereview_template
+                        ),
+                        rereview_prompt=rereview_context is not None,
                         outcome=outcome,
                         duration_ms=duration_ms,
                         report=report,

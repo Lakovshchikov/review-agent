@@ -46,6 +46,11 @@ def test_poll_subcommand_passes_flags_to_orchestrator(monkeypatch):
     assert cli.main(["poll", "--include-closed"]) == 0
     assert captured["include_closed"] is True
 
+    assert cli.main(["poll", "--again", "--dry-run"]) == 0
+    assert captured["again"] is True and captured["review_all"] is False
+    assert cli.main(["poll"]) == 0
+    assert captured["again"] is False
+
 
 def _manual_config(tmp_path):
     import yaml
@@ -611,3 +616,31 @@ def test_usage_and_prompt_check_use_the_home_config(tmp_path, monkeypatch, capsy
     assert cli.usage_main([], fetch=lambda url: PRICES) == 0
     assert cli.prompt_check_main([]) == 0
     assert list(elsewhere.iterdir()) == []
+
+
+def test_prompt_check_checks_and_shows_the_rereview_template_too(tmp_path, capsys):
+    from review_agent import cli
+
+    config = _check_config(tmp_path)
+    assert cli.main(["prompt-check", "--config", config, "--show"]) == 0
+    out = capsys.readouterr().out
+    assert "builtin/rereview.md.j2 [повторное ревью]" in out
+    assert "----- builtin/rereview.md.j2 [повторное ревью] (глобальные настройки) -----" in out
+    assert "повторное ревью этого же MR" in out
+
+
+def test_prompt_check_broken_project_rereview_template_exits_two(tmp_path, capsys):
+    from review_agent import cli
+
+    broken = _tpl(tmp_path, "re.md.j2", "{{ nope }}")
+    config = _check_config(tmp_path, projects=[{"path": "a/b", "prompt": {"rereview_template": broken}}])
+    assert cli.main(["prompt-check", "--config", config]) == 2
+    assert "неизвестная переменная: nope" in capsys.readouterr().out
+
+
+def test_prompt_check_lone_template_does_not_pull_in_the_rereview_one(tmp_path, capsys):
+    from review_agent import cli
+
+    child = _tpl(tmp_path, "t.md.j2", '{% extends "builtin/default.md.j2" %}')
+    assert cli.main(["prompt-check", "--template", child, "--config", str(tmp_path / "absent.yaml")]) == 0
+    assert "повторное ревью" not in capsys.readouterr().out

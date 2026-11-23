@@ -15,7 +15,13 @@ from typing import Any
 
 import yaml
 
-from review_agent.prompt import BUILTIN_TEMPLATE, DEFAULT_DOCS_DIRS, DEFAULT_INSTRUCTION_FILES
+from review_agent.prompt import (
+    BUILTIN_REREVIEW_TEMPLATE,
+    BUILTIN_TEMPLATE,
+    DEFAULT_DOCS_DIRS,
+    DEFAULT_INSTRUCTION_FILES,
+    DEFAULT_REREVIEW_MAX_REPLY_CHARS,
+)
 
 
 class ConfigError(ValueError):
@@ -118,6 +124,11 @@ class PromptSettings:
         default_factory=lambda: list(DEFAULT_INSTRUCTION_FILES)
     )
     docs_dirs: list[str] = dataclasses.field(default_factory=lambda: list(DEFAULT_DOCS_DIRS))
+    # A further review round (`poll --again`): its own template (None = the
+    # built-in one) and how many characters of developers' replies may go
+    # into the prompt.
+    rereview_template: str | None = None
+    rereview_max_reply_chars: int = DEFAULT_REREVIEW_MAX_REPLY_CHARS
 
 
 @dataclasses.dataclass(frozen=True)
@@ -131,6 +142,9 @@ class PromptOverrides:
     template: str | None = None
     instruction_files: list[str] | None = None
     docs_dirs: list[str] | None = None
+    # BUILTIN_REREVIEW_TEMPLATE when explicitly set to null, like `template`.
+    rereview_template: str | None = None
+    rereview_max_reply_chars: int | None = None
 
 
 DEFAULT_WORK_DIR = "./.review-agent"
@@ -281,6 +295,13 @@ def merge_prompt(base: PromptSettings, overrides: PromptOverrides | None) -> Pro
     template = base.template
     if overrides.template is not None:
         template = None if overrides.template == BUILTIN_TEMPLATE else overrides.template
+    rereview_template = base.rereview_template
+    if overrides.rereview_template is not None:
+        rereview_template = (
+            None
+            if overrides.rereview_template == BUILTIN_REREVIEW_TEMPLATE
+            else overrides.rereview_template
+        )
     return PromptSettings(
         template=template,
         instruction_files=(
@@ -289,6 +310,12 @@ def merge_prompt(base: PromptSettings, overrides: PromptOverrides | None) -> Pro
             else base.instruction_files
         ),
         docs_dirs=overrides.docs_dirs if overrides.docs_dirs is not None else base.docs_dirs,
+        rereview_template=rereview_template,
+        rereview_max_reply_chars=(
+            overrides.rereview_max_reply_chars
+            if overrides.rereview_max_reply_chars is not None
+            else base.rereview_max_reply_chars
+        ),
     )
 
 
@@ -454,7 +481,13 @@ def _skills_list(value: Any, field: str, base: Path) -> list[str]:
     return [_absolute(s, base) for s in value]
 
 
-_PROMPT_KEYS = ("template", "instruction_files", "docs_dirs")
+_PROMPT_KEYS = (
+    "template",
+    "instruction_files",
+    "docs_dirs",
+    "rereview_template",
+    "rereview_max_reply_chars",
+)
 
 
 def _load_prompt(prompt_data: Any, section: str, base: Path) -> PromptOverrides | None:
@@ -484,6 +517,23 @@ def _load_prompt(prompt_data: Any, section: str, base: Path) -> PromptOverrides 
             raise ConfigError(
                 f"'{section}.template' must be a file path or null (the built-in template)"
             )
+    rereview_template: str | None = None
+    if "rereview_template" in prompt_data:
+        value = prompt_data["rereview_template"]
+        if value is None or value == BUILTIN_REREVIEW_TEMPLATE:
+            rereview_template = BUILTIN_REREVIEW_TEMPLATE
+        elif isinstance(value, str) and value:
+            rereview_template = _absolute(value, base)
+        else:
+            raise ConfigError(
+                f"'{section}.rereview_template' must be a file path or null "
+                "(the built-in template)"
+            )
+    max_reply_chars: int | None = None
+    if prompt_data.get("rereview_max_reply_chars") is not None:
+        max_reply_chars = _positive_int(
+            prompt_data["rereview_max_reply_chars"], f"{section}.rereview_max_reply_chars"
+        )
     lists: dict[str, list[str] | None] = {}
     for key in ("instruction_files", "docs_dirs"):
         value = prompt_data.get(key)
@@ -498,6 +548,8 @@ def _load_prompt(prompt_data: Any, section: str, base: Path) -> PromptOverrides 
         template=template,
         instruction_files=lists["instruction_files"],
         docs_dirs=lists["docs_dirs"],
+        rereview_template=rereview_template,
+        rereview_max_reply_chars=max_reply_chars,
     )
 
 

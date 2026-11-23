@@ -53,6 +53,11 @@ prompt:
   # агенту передаётся путь к первому найденному, не содержимое. [] — не искать.
   instruction_files: [AGENTS.md, CLAUDE.md, .github/copilot-instructions.md]
   docs_dirs: [docs, documentation]
+  # Повторное ревью (`review-agent poll --again`): свой шаблон промпта (null —
+  # встроенный builtin/rereview.md.j2) и лимит символов комментариев
+  # разработчиков, которые попадают в промпт (остаются самые свежие).
+  rereview_template: null
+  rereview_max_reply_chars: 20000
 
 safety:
   # Пишется только в safety-note прогона; язык отчёта задан в промпте (русский).
@@ -132,7 +137,7 @@ gitlab:
       remote: origin                     # по умолчанию origin; только вместе с local_repo
     # Переопределения проекта: enabled, reviewers, review_drafts, provider, skills, prompt.
     # Заменяют глобальное значение целиком (provider — весь блок со своим reasoning_effort);
-    # prompt — по ключам: незаданные ключи берутся из глобальной секции prompt.
+    # prompt — по ключам: незаданные ключи (в т.ч. rereview_template) берутся из глобальной секции prompt.
     - path: b2c/front-checkout
       local_repo: C:/repos/front-checkout
       reviewers: [ai-reviewer, checkout-lead]

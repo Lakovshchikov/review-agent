@@ -226,3 +226,41 @@ def test_list_tree_paths_lists_files_and_directories(git_repo_with_base_and_head
 def test_list_tree_paths_unknown_commit_raises(git_repo_with_base_and_head):
     with pytest.raises(WorktreeError):
         list_tree_paths(git_repo_with_base_and_head["repo"], "0" * 40)
+
+
+# -- commit_available: the previous report's commit of a further round -------------
+
+
+def _g(repo, *args):
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_commit_available_for_a_commit_already_present(git_repo_with_base_and_head):
+    from review_agent.worktree import commit_available
+
+    data = git_repo_with_base_and_head
+    assert commit_available(data["repo"], data["base_sha"]) is True
+
+
+def test_commit_available_false_for_unknown_commit_without_raising(git_repo_with_base_and_head):
+    from review_agent.worktree import commit_available
+
+    # No `origin` here and the commit never existed: fetch fails, answer is False.
+    assert commit_available(git_repo_with_base_and_head["repo"], "f" * 40) is False
+
+
+def test_commit_available_fetches_a_commit_the_server_has(git_repo_with_base_and_head, tmp_path):
+    from review_agent.worktree import commit_available
+
+    origin = git_repo_with_base_and_head["repo"]
+    clone = tmp_path / "clone"
+    _g(tmp_path, "clone", "-q", str(origin), str(clone))
+    (origin / "file.txt").write_text("v3\n", encoding="utf-8")
+    _g(origin, "commit", "-q", "-am", "newer")
+    newer = _g(origin, "rev-parse", "HEAD")
+
+    assert has_commit(clone, newer) is False
+    assert commit_available(clone, newer) is True
+    assert has_commit(clone, newer) is True

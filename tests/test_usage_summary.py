@@ -212,3 +212,20 @@ def test_records_with_and_without_prompt_fields_mix():
     assert {r.record["review.run_id"] for r in summary.rows} == {"r-old", "r-new"}
     for fmt in ("table", "csv", "json"):
         assert render(summary, "review", fmt, wide=True)
+
+
+def test_further_round_records_are_summarised_like_any_other():
+    first = rec("r-1", mr=544)
+    again = {
+        **rec("r-2", mr=544),
+        "review.source": "poll-again",
+        "review.prompt.template": "builtin/rereview.md.j2",
+        "review.prompt.sha256": "cd" * 32,
+    }
+    summary = _summary([first, again])
+    assert {r.record["review.run_id"] for r in summary.rows} == {"r-1", "r-2"}
+    for by in ("review", "mr", "model", "day"):
+        for fmt in ("table", "csv", "json"):
+            assert render(summary, by, fmt, wide=True)
+    # Both rounds of one MR count in its group.
+    assert "544" in render(summary, "mr", "table")

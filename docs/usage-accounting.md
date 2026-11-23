@@ -31,10 +31,10 @@ generative AI) плюс собственные `review.*`. Каждый ключ
 | Поле | Что это |
 | --- | --- |
 | `schema`, `time` | версия формата записи, время записи |
-| `review.run_id`, `review.source` | какой прогон; `poll` или `manual` |
+| `review.run_id`, `review.source` | какой прогон; `poll` (первое ревью из `poll`), `poll-again` (повторное ревью, `poll --again`) или `manual` |
 | `review.project`, `review.mr.iid`, `review.base_sha`, `review.head_sha` | что ревьюилось |
 | `gen_ai.provider.name`, `gen_ai.request.model`, `review.reasoning_effort`, `review.skills` | конфиг прогона (у skill'ов — только имена файлов) |
-| `review.prompt.template`, `review.prompt.sha256` | шаблон промпта: путь к файлу или `builtin/default.md.j2`, и sha256 содержимого этого файла (при `extends`/`include` — только самого файла, без родителя); `null` в хэше — файл не прочитался. В записях, сделанных до появления шаблонов, полей нет |
+| `review.prompt.template`, `review.prompt.sha256` | шаблон промпта: путь к файлу или `builtin/default.md.j2` (у повторного ревью — `builtin/rereview.md.j2` или `prompt.rereview_template`), и sha256 содержимого этого файла (при `extends`/`include` — только самого файла, без родителя); `null` в хэше — файл не прочитался. В записях, сделанных до появления шаблонов, полей нет |
 | `review.harness.name`, `review.harness.version` | харнесс и его версия |
 | `review.outcome`, `review.duration_ms` | `succeeded` / `failed` / `interrupted`, общее время |
 | `gen_ai.usage.input_tokens` | **весь** вход, включая кэш (как в OTel) |
@@ -80,8 +80,8 @@ opencode: ...` — по одному на проход для каждого в�
 Проценты лимитов подписки (у ChatGPT — окна «5 часов» и «неделя»)
 review-agent получить сам не может (см. бэклог в AGENTS.md). Поэтому они
 вводятся вручную, и только там, где их можно честно привязать к одному
-ревью: в **интерактивном** `review-agent poll` (без `--all`) и в ручной
-команде из консоли.
+ревью: в **интерактивном** `review-agent poll` (без `--all`, включая
+`--again`) и в ручной команде из консоли.
 
 ```
 Замер квоты openai (до ревью): сколько % лимита ОСТАЛОСЬ сейчас (как в UI подписки). Enter — пропустить.
